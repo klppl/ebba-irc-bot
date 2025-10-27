@@ -1,11 +1,11 @@
 server: irc.server.org
 port: 6667
 use_tls: false
-nickname: bot
-username: bot
-realname: bot
+nickname: ebba
+username: ebba
+realname: Ebba Busch
 channels:
-- '#channel'
+- '#kristdemokraterna'
 prefix: .
 owner_nicks:
 - owner
