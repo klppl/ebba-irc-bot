@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def on_load(bot) -> None:
-    logger.info("bitcoin plugin loaded; responding to %sbitcoin", bot.prefix)
+    logger.info("bitcoin plugin loaded from %s; responding to %sbitcoin", __file__, bot.prefix)
 
 
 def on_unload(bot) -> None:
@@ -37,20 +37,19 @@ async def _handle_bitcoin_command(bot, channel: str) -> None:
         await bot.privmsg(channel, "BTC price unavailable")
         return
 
-    await bot.privmsg(channel, f"BTC: ${price:,.2f}")
+    await bot.privmsg(channel, f"$ {price}")
 
 
-async def _fetch_price(timeout: int) -> float:
+async def _fetch_price(timeout: int) -> int:
     loop = asyncio.get_running_loop()
 
-    def request_price() -> float:
+    def request_price() -> int:
         response = requests.get(API_URL, params=API_PARAMS, timeout=timeout)
         response.raise_for_status()
         payload = response.json()
         price = payload.get("bitcoin", {}).get("usd")
         if price is None:
             raise ValueError("Unexpected response payload")
-        return float(price)
+        return int(round(float(price)))
 
-    price = await loop.run_in_executor(None, request_price)
-    return price
+    return await loop.run_in_executor(None, request_price)

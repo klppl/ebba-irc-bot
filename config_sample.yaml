@@ -1,0 +1,17 @@
+server: irc.server.org
+port: 6667
+use_tls: false
+nickname: bot
+username: bot
+realname: bot
+channels:
+- '#channel'
+prefix: .
+owner_nicks:
+- owner
+reconnect_delay_secs: 5
+request_timeout_secs: 10
+plugins:
+  chatgpt:
+    api_key: ''
+    model: gpt-4o-mini

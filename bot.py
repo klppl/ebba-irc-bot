@@ -72,7 +72,8 @@ def apply_env_overrides(config: Dict[str, Any]) -> None:
 async def run_bot(config_path: Path) -> None:
     config = load_config(config_path)
     plugin_dir = Path(__file__).parent / "scripts"
-    plugin_manager = PluginManager(plugin_dir)
+    state_path = config_path.with_name("plugin_state.json")
+    plugin_manager = PluginManager(plugin_dir, state_path=state_path)
     client = IRCClient(config, plugin_manager)
     plugin_manager.load_all(client)
     try:
@@ -96,4 +97,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

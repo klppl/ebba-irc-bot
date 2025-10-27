@@ -206,8 +206,10 @@ class IRCClient:
         reply_target = nick if is_private else channel
 
         if command == "plugins":
-            plugins = self.plugin_manager.list_plugins()
-            message = "Loaded plugins: " + (", ".join(plugins) if plugins else "none")
+            enabled, disabled = self.plugin_manager.list_plugin_status()
+            enabled_str = ", ".join(enabled) if enabled else "none"
+            disabled_str = ", ".join(disabled) if disabled else "none"
+            message = f"Enabled plugins: {enabled_str} | Disabled plugins: {disabled_str}"
             await self.privmsg(reply_target, message)
             return
 
@@ -227,7 +229,12 @@ class IRCClient:
                 self.logger.exception("Error handling %s command", command)
                 await self.privmsg(reply_target, f"{command.title()} failed: {exc}")
             else:
-                await self.privmsg(reply_target, f"{command.title()}ed plugin '{plugin_name}'.")
+                status_text = "enabled" if command == "load" else "disabled"
+                if command == "reload":
+                    status_text = "reloaded"
+                await self.privmsg(
+                    reply_target, f"{command.title()}ed plugin '{plugin_name}' ({status_text})."
+                )
             return
 
         if command in {"say", "join", "part"}:
