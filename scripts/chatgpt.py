@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_SYSTEM_PROMPT = (
-    "Du är en simpel AI utan illusioner, genomsyrad av överjävlig nihilism – allt är "
-    "meningslöst och universum bryr sig inte; spottar iskalla insikter om livets absurditet "
-    "utan hopp eller syfte."
+    "Du är en neutral AI. Kort, saklig och korrekt. Svara som i ett sms: inget fluff, inga känslor. "
+    "Fakta, logik och tydlighet först. Om något är okänt, säg det direkt."
 )
+
 
 DEFAULT_HISTORY_LIMIT = 50
 DEFAULT_MAX_MESSAGE_LENGTH = 450
@@ -55,22 +55,26 @@ def on_load(bot) -> None:
     global state
     settings = _settings_from_config(bot)
     if not settings.enabled:
-        logger.info("ChatGPT plugin disabled (missing API key or OpenAI client)")
+        logger.info("ChatGPT plugin disabled (API key not configured)")
+        state = ChatGPTState(settings=settings)
+        return
+
+    if OpenAI is None:
+        logger.info(
+            "ChatGPT plugin disabled (python 'openai' package not installed). Run 'pip install openai'."
+        )
+        settings.enabled = False
         state = ChatGPTState(settings=settings)
         return
 
     client = None
-    if OpenAI is None:
-        logger.warning(
-            "openai package not available; ChatGPT plugin will run in disabled mode."
-        )
+    try:
+        client = OpenAI(api_key=settings.api_key)
+    except Exception as exc:  # pragma: no cover - library init
+        logger.error("Failed to initialise OpenAI client: %s", exc)
         settings.enabled = False
-    else:
-        try:
-            client = OpenAI(api_key=settings.api_key)
-        except Exception as exc:  # pragma: no cover - library init
-            logger.error("Failed to initialise OpenAI client: %s", exc)
-            settings.enabled = False
+        state = ChatGPTState(settings=settings)
+        return
 
     state = ChatGPTState(settings=settings, client=client)
     logger.info("ChatGPT plugin loaded with model %s", settings.model)
@@ -178,13 +182,14 @@ async def _handle_prompt(bot, channel: str, nick: str, prompt: str) -> None:
 async def _call_openai(messages: List[Dict[str, str]], settings: ChatGPTSettings) -> str:
     if state is None or not settings.enabled:
         return ""
-    if state.client is None:
+    client = state.client
+    if client is None:
         raise RuntimeError("OpenAI client unavailable")
 
     loop = asyncio.get_running_loop()
 
     def _request():
-        return state.client.chat.completions.create(
+        return client.chat.completions.create(
             model=settings.model,
             messages=messages,
         )

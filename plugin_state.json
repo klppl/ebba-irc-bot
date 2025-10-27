@@ -4,10 +4,12 @@
   ],
   "plugins": [
     "bitcoin",
+    "chatgpt",
     "extract_url",
     "fredag",
     "instagram",
     "reddit",
+    "svensk_el",
     "tvmaze",
     "twitter"
   ]
