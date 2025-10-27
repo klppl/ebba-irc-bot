@@ -1,0 +1,260 @@
+import asyncio
+import contextlib
+import logging
+import signal
+import ssl
+from asyncio import StreamReader, StreamWriter
+from typing import Dict, Optional
+
+from .plugin_manager import PluginManager
+from .utils import AsyncRateLimiter, IRCMessage, parse_irc_message
+
+
+class IRCClient:
+    """Asyncio based IRC client with plugin dispatch."""
+
+    def __init__(self, config: Dict[str, object], plugin_manager: PluginManager) -> None:
+        self.config = config
+        self.plugin_manager = plugin_manager
+        self.logger = logging.getLogger("IRCClient")
+        self.server = str(config["server"])
+        self.port = int(config["port"])
+        self.use_tls = bool(config.get("use_tls", False))
+        self.nickname = str(config["nickname"])
+        self.username = str(config["username"])
+        self.realname = str(config["realname"])
+        self.channels = list(config.get("channels", []))
+        self.prefix = str(config.get("prefix", "."))
+        self.owner_nicks = set(config.get("owner_nicks", []))
+        self.reconnect_delay = int(config.get("reconnect_delay_secs", 5))
+        self.request_timeout = int(config.get("request_timeout_secs", 10))
+        self.max_backoff = int(config.get("max_reconnect_delay_secs", 60))
+        rate_count = int(config.get("privmsg_rate_count", 4))
+        rate_window = float(config.get("privmsg_rate_window_secs", 2.0))
+        self._rate_limiter = AsyncRateLimiter(rate_count, rate_window)
+
+        self.reader: Optional[StreamReader] = None
+        self.writer: Optional[StreamWriter] = None
+        self._send_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._writer_task: Optional[asyncio.Task] = None
+        self._reader_task: Optional[asyncio.Task] = None
+        self._stop_event = asyncio.Event()
+        self._signals_registered = False
+
+    async def start(self) -> None:
+        """Attempt to connect and stay connected with exponential backoff."""
+        backoff = max(self.reconnect_delay, 1)
+        while not self._stop_event.is_set():
+            try:
+                await self._connect_once()
+                backoff = max(self.reconnect_delay, 1)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.logger.exception("Connection error: %s", exc)
+                await self._cleanup_connection()
+                if self._stop_event.is_set():
+                    break
+                self.logger.info("Reconnecting in %s seconds", backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, self.max_backoff)
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+        await self._cleanup_connection()
+
+    async def _connect_once(self) -> None:
+        ssl_context = ssl.create_default_context() if self.use_tls else None
+        self.logger.info("Connecting to %s:%s (TLS=%s)", self.server, self.port, self.use_tls)
+        self.reader, self.writer = await asyncio.open_connection(
+            self.server, self.port, ssl=ssl_context
+        )
+        await self._register()
+
+        loop = asyncio.get_running_loop()
+        if not self._signals_registered:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(self.stop()))
+                except NotImplementedError:
+                    # Not available on Windows event loop
+                    pass
+            self._signals_registered = True
+
+        self._writer_task = asyncio.create_task(self._writer_loop(), name="irc-writer")
+        self._reader_task = asyncio.create_task(self._reader_loop(), name="irc-reader")
+
+        await self._reader_task
+        await self._cleanup_connection()
+
+    async def _register(self) -> None:
+        await self.send_raw(f"NICK {self.nickname}")
+        await self.send_raw(f"USER {self.username} 0 * :{self.realname}")
+
+    async def _cleanup_connection(self) -> None:
+        if self._writer_task:
+            self._writer_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._writer_task
+        if self._reader_task:
+            self._reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader_task
+
+        if self.writer:
+            try:
+                self.writer.close()
+                await self.writer.wait_closed()
+            except Exception:
+                pass
+
+        self.reader = None
+        self.writer = None
+        self._writer_task = None
+        self._reader_task = None
+        self._send_queue = asyncio.Queue()
+
+    async def _writer_loop(self) -> None:
+        assert self.writer is not None
+        while not self._stop_event.is_set():
+            message = await self._send_queue.get()
+            self.writer.write(f"{message}\r\n".encode("utf-8"))
+            try:
+                await self.writer.drain()
+            except ConnectionError:
+                self.logger.warning("Connection lost during write")
+                break
+
+    async def _reader_loop(self) -> None:
+        assert self.reader is not None
+        while not self._stop_event.is_set():
+            raw = await self.reader.readline()
+            if not raw:
+                self.logger.warning("Server closed the connection")
+                break
+            line = raw.decode("utf-8", errors="ignore").strip("\r\n")
+            if not line:
+                continue
+            self.logger.debug("< %s", line)
+            message = parse_irc_message(line)
+            await self._handle_message(message)
+
+    async def send_raw(self, message: str) -> None:
+        self.logger.debug("> %s", message)
+        await self._send_queue.put(message)
+
+    async def privmsg(self, target: str, text: str) -> None:
+        await self._rate_limiter.acquire()
+        await self.send_raw(f"PRIVMSG {target} :{text}")
+
+    async def join(self, channel: str) -> None:
+        await self.send_raw(f"JOIN {channel}")
+
+    async def part(self, channel: str, reason: str = "") -> None:
+        if reason:
+            await self.send_raw(f"PART {channel} :{reason}")
+        else:
+            await self.send_raw(f"PART {channel}")
+
+    async def _handle_message(self, message: IRCMessage) -> None:
+        if message.command == "PING":
+            payload = message.trailing or "server"
+            await self.send_raw(f"PONG :{payload}")
+            return
+
+        if message.command == "001":
+            await self._join_initial_channels()
+            return
+
+        if message.command == "433":
+            self.logger.error("Nickname %s already in use", self.nickname)
+            self.nickname = f"{self.nickname}_"
+            await self.send_raw(f"NICK {self.nickname}")
+            return
+
+        if message.command == "PRIVMSG":
+            await self._handle_privmsg(message)
+
+    async def _join_initial_channels(self) -> None:
+        for channel in self.channels:
+            await self.join(channel)
+
+    async def _handle_privmsg(self, message: IRCMessage) -> None:
+        if message.prefix is None or message.trailing is None:
+            return
+        user = message.prefix
+        target = message.params[0] if message.params else ""
+        text = message.trailing
+        nick = user.split("!", 1)[0]
+        is_private = target.lower() == self.nickname.lower()
+        channel = nick if is_private else target
+        await self._handle_builtin_commands(nick, channel, text, is_private)
+        self.plugin_manager.dispatch_message(self, user, channel, text)
+
+    async def _handle_builtin_commands(
+        self, nick: str, channel: str, text: str, is_private: bool
+    ) -> None:
+        if not text.startswith(self.prefix):
+            return
+
+        parts = text[len(self.prefix) :].strip().split()
+        if not parts:
+            return
+
+        command = parts[0].lower()
+        args = parts[1:]
+        reply_target = nick if is_private else channel
+
+        if command == "plugins":
+            plugins = self.plugin_manager.list_plugins()
+            message = "Loaded plugins: " + (", ".join(plugins) if plugins else "none")
+            await self.privmsg(reply_target, message)
+            return
+
+        if command in {"load", "unload", "reload"}:
+            if not args:
+                await self.privmsg(reply_target, f"Usage: {self.prefix}{command} <plugin>")
+                return
+            plugin_name = args[0]
+            try:
+                if command == "load":
+                    self.plugin_manager.load(plugin_name, self)
+                elif command == "unload":
+                    self.plugin_manager.unload(plugin_name, self)
+                else:
+                    self.plugin_manager.reload(plugin_name, self)
+            except Exception as exc:
+                self.logger.exception("Error handling %s command", command)
+                await self.privmsg(reply_target, f"{command.title()} failed: {exc}")
+            else:
+                await self.privmsg(reply_target, f"{command.title()}ed plugin '{plugin_name}'.")
+            return
+
+        if command in {"say", "join", "part"}:
+            if nick not in self.owner_nicks:
+                await self.privmsg(reply_target, "You do not have permission for that command.")
+                return
+
+            if command == "say":
+                if len(args) < 2:
+                    await self.privmsg(reply_target, f"Usage: {self.prefix}say <target> <text>")
+                    return
+                target = args[0]
+                text_to_send = " ".join(args[1:])
+                await self.privmsg(target, text_to_send)
+                await self.privmsg(reply_target, "Message sent.")
+            elif command == "join":
+                if not args:
+                    await self.privmsg(reply_target, f"Usage: {self.prefix}join <#channel>")
+                    return
+                target_channel = args[0]
+                await self.join(target_channel)
+                await self.privmsg(reply_target, f"Joining {target_channel}")
+            elif command == "part":
+                if not args:
+                    await self.privmsg(reply_target, f"Usage: {self.prefix}part <#channel>")
+                    return
+                target_channel = args[0]
+                reason = " ".join(args[1:]) if len(args) > 1 else ""
+                await self.part(target_channel, reason)
+                await self.privmsg(reply_target, f"Parting {target_channel}")
