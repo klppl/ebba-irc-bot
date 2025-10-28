@@ -4,7 +4,7 @@ import logging
 import signal
 import ssl
 from asyncio import StreamReader, StreamWriter
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -15,7 +15,7 @@ from .utils import AsyncRateLimiter, IRCMessage, parse_irc_message
 class IRCClient:
     """Asyncio based IRC client with plugin dispatch."""
 
-    def __init__(self, config: Dict[str, object], plugin_manager: PluginManager) -> None:
+    def __init__(self, config: Dict[str, Any], plugin_manager: PluginManager) -> None:
         self.config = config
         self.plugin_manager = plugin_manager
         self.logger = logging.getLogger("IRCClient")
@@ -151,12 +151,14 @@ class IRCClient:
 
     async def join(self, channel: str) -> None:
         await self.send_raw(f"JOIN {channel}")
+        self._remember_channel(channel)
 
     async def part(self, channel: str, reason: str = "") -> None:
         if reason:
             await self.send_raw(f"PART {channel} :{reason}")
         else:
             await self.send_raw(f"PART {channel}")
+        self._forget_channel(channel)
 
     async def _handle_message(self, message: IRCMessage) -> None:
         if message.command == "PING":
@@ -176,6 +178,10 @@ class IRCClient:
 
         if message.command == "JOIN":
             await self._handle_join(message)
+            return
+
+        if message.command == "PART":
+            await self._handle_part(message)
             return
 
         if message.command == "PRIVMSG":
@@ -217,6 +223,21 @@ class IRCClient:
 
         self.plugin_manager.dispatch_join(self, prefix, channel)
 
+    async def _handle_part(self, message: IRCMessage) -> None:
+        prefix = message.prefix
+        if prefix is None:
+            return
+
+        if not message.params:
+            return
+        channel = message.params[0].strip()
+        if not channel:
+            return
+
+        nick = prefix.split("!", 1)[0]
+        if nick.lower() == self.nickname.lower():
+            self._forget_channel(channel)
+
     def _remember_channel(self, channel: str) -> None:
         channel = channel.strip()
         if not channel:
@@ -232,6 +253,30 @@ class IRCClient:
                 channels_list.append(channel)
         else:
             self.config["channels"] = [channel]
+
+        self._persist_channels()
+
+    def _forget_channel(self, channel: str) -> None:
+        channel = channel.strip()
+        if not channel:
+            return
+
+        target_lower = channel.lower()
+        self.channels = [
+            existing
+            for existing in self.channels
+            if isinstance(existing, str) and existing.lower() != target_lower
+        ]
+
+        channels_list = self.config.get("channels")
+        if isinstance(channels_list, list):
+            self.config["channels"] = [
+                existing
+                for existing in channels_list
+                if isinstance(existing, str) and existing.lower() != target_lower
+            ]
+        else:
+            self.config["channels"] = list(self.channels)
 
         self._persist_channels()
 
@@ -252,28 +297,35 @@ class IRCClient:
             )
             return
 
-        channels_section = data.get("channels")
-        if isinstance(channels_section, list):
-            existing = [str(item) for item in channels_section]
-        else:
-            existing = []
-
-        existing_lower = {item.lower() for item in existing}
-        changed = False
-
+        normalized_channels = []
+        seen_lower = set()
         for channel in self.channels:
             if not isinstance(channel, str):
                 continue
-            lowered = channel.lower()
-            if lowered not in existing_lower:
-                existing.append(channel)
-                existing_lower.add(lowered)
-                changed = True
+            channel_name = channel.strip()
+            if not channel_name:
+                continue
+            lowered = channel_name.lower()
+            if lowered in seen_lower:
+                continue
+            normalized_channels.append(channel_name)
+            seen_lower.add(lowered)
 
-        if not changed:
+        self.channels = list(normalized_channels)
+        self.config["channels"] = list(normalized_channels)
+
+        existing_section = data.get("channels")
+        if isinstance(existing_section, list):
+            existing_channels = [
+                str(item).strip() for item in existing_section if isinstance(item, str)
+            ]
+        else:
+            existing_channels = []
+
+        if existing_channels == normalized_channels:
             return
 
-        data["channels"] = existing
+        data["channels"] = normalized_channels
 
         try:
             with config_path.open("w", encoding="utf-8") as handle:
@@ -348,6 +400,7 @@ class IRCClient:
                     return
                 target_channel = args[0]
                 await self.join(target_channel)
+                self._remember_channel(target_channel)
                 await self.privmsg(reply_target, f"Joining {target_channel}")
             elif command == "part":
                 if not args:
@@ -356,4 +409,5 @@ class IRCClient:
                 target_channel = args[0]
                 reason = " ".join(args[1:]) if len(args) > 1 else ""
                 await self.part(target_channel, reason)
+                self._forget_channel(target_channel)
                 await self.privmsg(reply_target, f"Parting {target_channel}")
