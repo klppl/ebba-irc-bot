@@ -118,18 +118,27 @@ def _settings_from_config(bot) -> RedditSettings:
         user=str(section.get("user_template", template_defaults.user)),
     )
 
-    max_chars = section.get("max_chars", defaults.max_chars)
-    try:
-        max_chars = int(max_chars)
-    except (TypeError, ValueError):
-        max_chars = defaults.max_chars
+    raw_max_chars = section.get("max_chars")
+    max_chars = defaults.max_chars
+    if isinstance(raw_max_chars, int):
+        max_chars = raw_max_chars
+    elif isinstance(raw_max_chars, str):
+        try:
+            max_chars = int(raw_max_chars)
+        except ValueError:
+            max_chars = defaults.max_chars
 
     user_agent = str(section.get("user_agent", defaults.user_agent))
-    timeout = section.get("timeout", defaults.timeout)
-    try:
-        timeout = int(timeout)
-    except (TypeError, ValueError):
-        timeout = defaults.timeout
+
+    raw_timeout = section.get("timeout")
+    timeout = defaults.timeout
+    if isinstance(raw_timeout, int):
+        timeout = raw_timeout
+    elif isinstance(raw_timeout, str):
+        try:
+            timeout = int(raw_timeout)
+        except ValueError:
+            timeout = defaults.timeout
 
     return RedditSettings(
         max_chars=max_chars,
