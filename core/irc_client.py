@@ -6,6 +6,8 @@ import ssl
 from asyncio import StreamReader, StreamWriter
 from typing import Dict, Optional
 
+import yaml
+
 from .plugin_manager import PluginManager
 from .utils import AsyncRateLimiter, IRCMessage, parse_irc_message
 
@@ -209,7 +211,77 @@ class IRCClient:
         if not channel:
             return
 
+        nick = prefix.split("!", 1)[0]
+        if nick.lower() == self.nickname.lower():
+            self._remember_channel(channel)
+
         self.plugin_manager.dispatch_join(self, prefix, channel)
+
+    def _remember_channel(self, channel: str) -> None:
+        channel = channel.strip()
+        if not channel:
+            return
+
+        # Update in-memory list (case-insensitive dedupe).
+        if not any(existing.lower() == channel.lower() for existing in self.channels):
+            self.channels.append(channel)
+
+        channels_list = self.config.setdefault("channels", [])
+        if isinstance(channels_list, list):
+            if not any(existing.lower() == channel.lower() for existing in channels_list):
+                channels_list.append(channel)
+        else:
+            self.config["channels"] = [channel]
+
+        self._persist_channels()
+
+    def _persist_channels(self) -> None:
+        config_path = self.plugin_manager.get_config_path()
+        if not config_path:
+            return
+
+        try:
+            if config_path.exists():
+                with config_path.open("r", encoding="utf-8") as handle:
+                    data = yaml.safe_load(handle) or {}
+            else:
+                data = {}
+        except Exception:
+            self.logger.warning(
+                "Failed to read config file when updating channels", exc_info=True
+            )
+            return
+
+        channels_section = data.get("channels")
+        if isinstance(channels_section, list):
+            existing = [str(item) for item in channels_section]
+        else:
+            existing = []
+
+        existing_lower = {item.lower() for item in existing}
+        changed = False
+
+        for channel in self.channels:
+            if not isinstance(channel, str):
+                continue
+            lowered = channel.lower()
+            if lowered not in existing_lower:
+                existing.append(channel)
+                existing_lower.add(lowered)
+                changed = True
+
+        if not changed:
+            return
+
+        data["channels"] = existing
+
+        try:
+            with config_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(data, handle, sort_keys=False)
+        except Exception:
+            self.logger.warning(
+                "Failed to write updated channels to config", exc_info=True
+            )
 
     async def _handle_builtin_commands(
         self, nick: str, channel: str, text: str, is_private: bool

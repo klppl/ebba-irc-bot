@@ -1,11 +1,10 @@
 import importlib
 import importlib.util
-import json
 import logging
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import yaml
 
@@ -17,14 +16,13 @@ class PluginManager:
         self,
         plugin_dir: Path,
         logger: Optional[logging.Logger] = None,
-        state_path: Optional[Path] = None,
         config_path: Optional[Path] = None,
     ) -> None:
         self.plugin_dir = plugin_dir
         self.logger = logger or logging.getLogger("PluginManager")
         self._plugins: Dict[str, ModuleType] = {}
-        self._state_path = state_path
-        self._disabled_plugins, self._known_plugins = self._load_state()
+        self._disabled_plugins: Set[str] = set()
+        self._known_plugins: Set[str] = set()
         self._config_path = config_path
         self._apply_config_disabled_preferences()
 
@@ -83,12 +81,9 @@ class PluginManager:
             raise
         else:
             self._plugins[plugin_name] = module
-            if not hasattr(self, "_known_plugins"):
-                self._known_plugins = set()
             self._known_plugins.add(plugin_name)
             if plugin_name in self._disabled_plugins:
                 self._disabled_plugins.discard(plugin_name)
-            self._save_state()
             self._set_plugin_enabled_flag(bot, plugin_name, True)
             self.logger.info("Loaded plugin '%s'", plugin_name)
 
@@ -107,7 +102,6 @@ class PluginManager:
         module_name = getattr(module, "__name__", self.module_name(plugin_name))
         sys.modules.pop(module_name, None)
         self._disabled_plugins.add(plugin_name)
-        self._save_state()
         self._set_plugin_enabled_flag(bot, plugin_name, False)
         self.logger.info("Unloaded plugin '%s'", plugin_name)
 
@@ -138,6 +132,9 @@ class PluginManager:
             except Exception:
                 self.logger.exception("Plugin '%s' raised during on_join", name)
 
+    def get_config_path(self) -> Optional[Path]:
+        return self._config_path
+
     def load_all(self, bot) -> None:
         if not self.plugin_dir.exists():
             self.logger.warning("Plugin directory %s does not exist; creating", self.plugin_dir)
@@ -150,7 +147,6 @@ class PluginManager:
         )
         self._disabled_plugins.intersection_update(available)
         self._known_plugins = set(available)
-        self._save_state()
 
         for name in available:
             self._ensure_plugin_entry(bot, name, name not in self._disabled_plugins)
@@ -162,28 +158,6 @@ class PluginManager:
                 self.load(name, bot)
             except Exception:
                 self.logger.exception("Failed to load plugin '%s'", name)
-
-    def _load_state(self) -> Tuple[set, set]:
-        if not self._state_path:
-            return set(), set()
-        try:
-            if self._state_path.exists():
-                with self._state_path.open("r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-                disabled = payload.get("disabled", [])
-                known = payload.get("plugins", [])
-                if isinstance(disabled, list):
-                    disabled_set = {str(name) for name in disabled}
-                else:
-                    disabled_set = set()
-                if isinstance(known, list):
-                    known_set = {str(name) for name in known}
-                else:
-                    known_set = set()
-                return disabled_set, known_set
-        except Exception:
-            self.logger.warning("Failed to load plugin state; starting fresh", exc_info=True)
-        return set(), set()
 
     def _apply_config_disabled_preferences(self) -> None:
         if not self._config_path or not self._config_path.exists():
@@ -214,26 +188,6 @@ class PluginManager:
             self._disabled_plugins.difference_update(enabled_in_config)
         if disabled_in_config:
             self._disabled_plugins.update(disabled_in_config)
-
-    def _save_state(self) -> None:
-        if not self._state_path:
-            return
-        try:
-            if not getattr(self, "_known_plugins", None):
-                self._known_plugins = {
-                    path.stem
-                    for path in self.plugin_dir.glob("*.py")
-                    if not path.name.startswith("_")
-                }
-            payload = {
-                "disabled": sorted(self._disabled_plugins),
-                "plugins": sorted(self._known_plugins),
-            }
-            self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._state_path.open("w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
-        except Exception:
-            self.logger.warning("Failed to persist plugin state", exc_info=True)
 
     def _apply_config_defaults(self, bot, plugin_name: str, module: ModuleType) -> None:
         defaults = getattr(module, "CONFIG_DEFAULTS", None)

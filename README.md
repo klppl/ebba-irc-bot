@@ -5,8 +5,8 @@ Async Python 3 IRC bot with a hot-reloadable plugin layer and persistent plugin 
 ## Features
 - asyncio IRC core with automatic reconnects, flood protection, and `.load/.unload/.reload`.
 - Plugins live in `scripts/`; each module exposes optional `on_load`, `on_unload`, `on_message`.
-- Runtime plugin state stored in `plugin_state.json` so disabled plugins stay disabled after restarts.
-- Sample integrations: CoinGecko BTC price, TV Maze, Twitter oEmbed, Reddit summaries, Instagram, ChatGPT responder, Swedish electricity prices, etc.
+- Plugin enable/disable state is written back to `config.yaml` so settings survive restarts.
+- Sample integrations: CoinGecko BTC price, TV Maze, Twitter oEmbed, Reddit summaries, Instagram, ChatGPT responder, Swedish electricity prices, SMHI weather, etc.
 
 ## Quickstart
 ```bash

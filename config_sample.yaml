@@ -28,6 +28,11 @@ plugins:
     enabled: true
   svensk_el:
     enabled: true
+  smhi:
+    enabled: true
+    language: sv-SE
+    user_agent: ebba-irc-bot smhi plugin (+https://github.com/alex/ebba-irc-bot)
+    timeout: 15
   tvmaze:
     enabled: true
   twitter:
