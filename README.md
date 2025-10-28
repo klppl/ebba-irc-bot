@@ -25,6 +25,8 @@ Edit `config.yaml` (or override via env vars) for server, nickname, channels, an
 
 ## Plugin Skeleton
 ```python
+import asyncio
+
 def on_message(bot, user, channel, message):
     if message.strip() == f"{bot.prefix}ping":
         asyncio.get_running_loop().create_task(bot.privmsg(channel, "pong"))
