@@ -78,3 +78,4 @@ Thumbs.db
 config.yaml
 scripts/*.json
 *.json
+scripts/seen_users.json
