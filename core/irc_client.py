@@ -172,6 +172,10 @@ class IRCClient:
             await self.send_raw(f"NICK {self.nickname}")
             return
 
+        if message.command == "JOIN":
+            await self._handle_join(message)
+            return
+
         if message.command == "PRIVMSG":
             await self._handle_privmsg(message)
 
@@ -190,6 +194,22 @@ class IRCClient:
         channel = nick if is_private else target
         await self._handle_builtin_commands(nick, channel, text, is_private)
         self.plugin_manager.dispatch_message(self, user, channel, text)
+
+    async def _handle_join(self, message: IRCMessage) -> None:
+        prefix = message.prefix
+        if prefix is None:
+            return
+
+        channel = ""
+        if message.trailing:
+            channel = message.trailing
+        elif message.params:
+            channel = message.params[0]
+
+        if not channel:
+            return
+
+        self.plugin_manager.dispatch_join(self, prefix, channel)
 
     async def _handle_builtin_commands(
         self, nick: str, channel: str, text: str, is_private: bool

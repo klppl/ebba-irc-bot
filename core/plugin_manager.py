@@ -128,6 +128,16 @@ class PluginManager:
             except Exception:
                 self.logger.exception("Plugin '%s' raised during on_message", name)
 
+    def dispatch_join(self, bot, user: str, channel: str) -> None:
+        for name, module in list(self._plugins.items()):
+            handler = getattr(module, "on_join", None)
+            if not callable(handler):
+                continue
+            try:
+                handler(bot, user, channel)
+            except Exception:
+                self.logger.exception("Plugin '%s' raised during on_join", name)
+
     def load_all(self, bot) -> None:
         if not self.plugin_dir.exists():
             self.logger.warning("Plugin directory %s does not exist; creating", self.plugin_dir)

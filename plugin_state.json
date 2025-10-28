@@ -1,0 +1,18 @@
+{
+  "disabled": [
+    "twitter"
+  ],
+  "plugins": [
+    "bitcoin",
+    "chatgpt",
+    "extract_url",
+    "fredag",
+    "instagram",
+    "reddit",
+    "seen",
+    "svensk_el",
+    "tell",
+    "tvmaze",
+    "twitter"
+  ]
+}
