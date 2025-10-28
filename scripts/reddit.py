@@ -1,3 +1,5 @@
+"""Reddit link summarizer (optional config: `plugins.reddit`)."""
+
 import asyncio
 import datetime as dt
 import html

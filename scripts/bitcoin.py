@@ -1,3 +1,5 @@
+"""BTC price responder using CoinGecko (trigger: `.bitcoin`)."""
+
 import asyncio
 import logging
 

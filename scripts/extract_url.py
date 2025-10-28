@@ -1,3 +1,5 @@
+"""Preview page metadata for posted links (config: `plugins.extract_url`, optional)."""
+
 import asyncio
 import logging
 import re

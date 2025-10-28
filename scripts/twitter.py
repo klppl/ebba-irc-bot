@@ -1,3 +1,5 @@
+"""Twitter/X oEmbed formatter (config: `plugins.twitter`, optional)."""
+
 import asyncio
 import json
 import logging

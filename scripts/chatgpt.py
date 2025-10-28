@@ -1,3 +1,18 @@
+"""
+ChatGPT responder plugin.
+
+Configuration (config.yaml):
+
+```
+plugins:
+  chatgpt:
+    api_key: "<openai_api_key>"
+    model: "gpt-4o-mini"  # optional, defaults to gpt-4o-mini
+```
+
+Only `api_key` is required. If omitted, the plugin stays disabled.
+"""
+
 import asyncio
 import logging
 import re

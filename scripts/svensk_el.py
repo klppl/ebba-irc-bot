@@ -1,3 +1,5 @@
+"""Swedish electricity spot price plugin (no external config required)."""
+
 import asyncio
 import json
 import logging

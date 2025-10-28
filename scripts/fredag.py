@@ -1,3 +1,5 @@
+"""Responds to Swedish “är det fredag?” queries with weekday status."""
+
 import asyncio
 import datetime
 import logging

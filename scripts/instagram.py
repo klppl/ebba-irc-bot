@@ -1,3 +1,5 @@
+"""Instagram post/reel formatter (optional config: `plugins.instagram`)."""
+
 import asyncio
 import html
 import json

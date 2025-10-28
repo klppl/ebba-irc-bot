@@ -1,3 +1,5 @@
+"""TVMaze next-episode lookup (config: `plugins.tvmaze.timezone`, optional)."""
+
 import asyncio
 import logging
 from dataclasses import dataclass
