@@ -79,3 +79,4 @@ config.yaml
 scripts/*.json
 *.json
 scripts/seen_users.json
+*.json
