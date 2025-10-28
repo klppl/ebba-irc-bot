@@ -9,6 +9,14 @@ API_URL = "https://api.coingecko.com/api/v3/simple/price"
 API_PARAMS = {"ids": "bitcoin", "vs_currencies": "usd"}
 logger = logging.getLogger(__name__)
 
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "bitcoin": {
+            "enabled": True,
+        }
+    }
+}
+
 
 def on_load(bot) -> None:
     logger.info("bitcoin plugin loaded from %s; responding to %sbitcoin", __file__, bot.prefix)

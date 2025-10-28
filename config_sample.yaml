@@ -13,5 +13,22 @@ reconnect_delay_secs: 5
 request_timeout_secs: 10
 plugins:
   chatgpt:
-    api_key: ''
+    enabled: false
+    api_key: ""
     model: gpt-4o-mini
+  bitcoin:
+    enabled: true
+  extract_url:
+    enabled: true
+  fredag:
+    enabled: true
+  instagram:
+    enabled: true
+  reddit:
+    enabled: true
+  svensk_el:
+    enabled: true
+  tvmaze:
+    enabled: true
+  twitter:
+    enabled: true

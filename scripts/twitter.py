@@ -6,7 +6,7 @@ import logging
 import re
 import textwrap
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from typing import Dict, Iterable, Optional
 
 import requests
 
@@ -22,6 +22,20 @@ OEMBED_ENDPOINT = "https://publish.twitter.com/oembed"
 DEFAULT_TEMPLATE = "{name} (@{nick}): {content} - {date}"
 DEFAULT_USER_AGENT = "ebba-irc-bot twitter plugin (+https://github.com/alex/ebba-irc-bot)"
 MAX_URLS_PER_MESSAGE = 2
+
+
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "twitter": {
+            "enabled": True,
+            "template": DEFAULT_TEMPLATE,
+            "user_agent": DEFAULT_USER_AGENT,
+            "timeout": 10,
+            "max_urls_per_message": MAX_URLS_PER_MESSAGE,
+            "max_content_chars": 240,
+        }
+    }
+}
 
 
 @dataclass
@@ -82,9 +96,12 @@ async def _handle_twitter_url(
 
 def _settings_from_config(bot) -> TwitterSettings:
     config = getattr(bot, "config", {})
-    section = config.get("twitter") if isinstance(config, dict) else {}
-    if not isinstance(section, dict):
-        section = {}
+    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
+    section: Dict[str, object] = {}
+    if isinstance(plugins_section, dict):
+        candidate = plugins_section.get("twitter")
+        if isinstance(candidate, dict):
+            section = candidate
 
     defaults = TwitterSettings()
     enabled = bool(section.get("enabled", defaults.enabled))

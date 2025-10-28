@@ -73,7 +73,11 @@ async def run_bot(config_path: Path) -> None:
     config = load_config(config_path)
     plugin_dir = Path(__file__).parent / "scripts"
     state_path = config_path.with_name("plugin_state.json")
-    plugin_manager = PluginManager(plugin_dir, state_path=state_path)
+    plugin_manager = PluginManager(
+        plugin_dir,
+        state_path=state_path,
+        config_path=config_path,
+    )
     client = IRCClient(config, plugin_manager)
     plugin_manager.load_all(client)
     try:

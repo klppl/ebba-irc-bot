@@ -18,17 +18,34 @@ URL_PATTERN = re.compile(r"https?://[^\s<>\u0000-\u001f]+", re.IGNORECASE)
 
 DEFAULT_USER_AGENT = "ebba-irc-bot metadata extractor (+https://github.com/alex/ebba-irc-bot)"
 MAX_URLS_PER_MESSAGE = 2
+DEFAULT_TIMEOUT_SECS = 10
+DEFAULT_SUMMARY_TEMPLATE = "{title}{description_part} ({host})"
+
+
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "extract_url": {
+            "enabled": True,
+            "user_agent": DEFAULT_USER_AGENT,
+            "timeout": DEFAULT_TIMEOUT_SECS,
+            "max_urls_per_message": MAX_URLS_PER_MESSAGE,
+            "include_description": True,
+            "max_description_chars": 200,
+            "summary_template": DEFAULT_SUMMARY_TEMPLATE,
+        }
+    }
+}
 
 
 @dataclass
 class ExtractTemplates:
-    summary: str = "{title}{description_part} ({host})"
+    summary: str = DEFAULT_SUMMARY_TEMPLATE
 
 
 @dataclass
 class ExtractSettings:
     user_agent: str = DEFAULT_USER_AGENT
-    timeout: int = 10
+    timeout: int = DEFAULT_TIMEOUT_SECS
     max_urls_per_message: int = MAX_URLS_PER_MESSAGE
     include_description: bool = True
     max_description_chars: int = 200
@@ -78,9 +95,12 @@ async def _handle_extract(bot, channel: str, url: str, settings: ExtractSettings
 
 def _settings_from_config(bot) -> ExtractSettings:
     config = getattr(bot, "config", {})
-    section = config.get("extract_url") if isinstance(config, dict) else {}
-    if not isinstance(section, dict):
-        section = {}
+    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
+    section: Dict[str, object] = {}
+    if isinstance(plugins_section, dict):
+        candidate = plugins_section.get("extract_url")
+        if isinstance(candidate, dict):
+            section = candidate
 
     defaults = ExtractSettings()
     templates = ExtractTemplates(

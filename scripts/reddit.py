@@ -25,6 +25,22 @@ DEFAULT_TIMEOUT_SECS = 10
 MAX_URLS_PER_MESSAGE = 2
 
 
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "reddit": {
+            "enabled": True,
+            "max_chars": 240,
+            "user_agent": DEFAULT_USER_AGENT,
+            "timeout": DEFAULT_TIMEOUT_SECS,
+            "link_thread_template": "[Reddit] /r/{subreddit} - {title} | {points} | {comments} | {age}",
+            "text_thread_template": "[Reddit] /r/{subreddit} (Self) - {title} | {points} | {age} | {extract}",
+            "comment_template": "[Reddit] Comment by {author} | {points} | {age} | {extract}",
+            "user_template": "[Reddit] User: {name} | Karma: {link_karma} / {comment_karma} | {age}",
+        }
+    }
+}
+
+
 @dataclass
 class RedditTemplates:
     link_thread: str = "[Reddit] /r/{subreddit} - {title} | {points} | {comments} | {age}"
@@ -84,9 +100,13 @@ async def _handle_reddit_url(bot, channel: str, url: str, settings: RedditSettin
 
 
 def _settings_from_config(bot) -> RedditSettings:
-    section = bot.config.get("reddit") if isinstance(getattr(bot, "config", {}), dict) else {}
-    if not isinstance(section, dict):
-        section = {}
+    config = getattr(bot, "config", {})
+    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
+    section: Dict[str, object] = {}
+    if isinstance(plugins_section, dict):
+        candidate = plugins_section.get("reddit")
+        if isinstance(candidate, dict):
+            section = candidate
 
     defaults = RedditSettings()
 

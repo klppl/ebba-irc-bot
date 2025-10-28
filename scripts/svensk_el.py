@@ -20,6 +20,15 @@ COMMANDS = {"el"}
 AREA_MAPPING = {"1": "SN1", "2": "SN2", "3": "SN3", "4": "SN4"}
 
 
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "svensk_el": {
+            "enabled": True,
+        }
+    }
+}
+
+
 @dataclass(frozen=True)
 class PriceRecord:
     value: float

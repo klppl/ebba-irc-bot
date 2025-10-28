@@ -19,6 +19,16 @@ DEFAULT_TIMEZONE = "UTC"
 COMMANDS = {"next", "n"}
 
 
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "tvmaze": {
+            "enabled": True,
+            "timezone": DEFAULT_TIMEZONE,
+        }
+    }
+}
+
+
 @dataclass
 class TvMazeSettings:
     timezone: ZoneInfo
@@ -79,11 +89,12 @@ async def _handle_tvmaze(bot, channel: str, query: str) -> None:
 
 def _settings_from_config(bot) -> TvMazeSettings:
     config = getattr(bot, "config", {})
-    section = config.get("tvmaze") if isinstance(config, dict) else {}
-
+    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
     tz_name = DEFAULT_TIMEZONE
-    if isinstance(section, dict):
-        tz_name = section.get("timezone", DEFAULT_TIMEZONE)
+    if isinstance(plugins_section, dict):
+        candidate = plugins_section.get("tvmaze")
+        if isinstance(candidate, dict):
+            tz_name = candidate.get("timezone", DEFAULT_TIMEZONE)
 
     try:
         tz = ZoneInfo(str(tz_name))

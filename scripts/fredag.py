@@ -10,6 +10,14 @@ FRIDAY_INDEX = 4  # Monday=0
 FRIDAY_URL = "https://rebecca.blackfriday"
 logger = logging.getLogger(__name__)
 
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "fredag": {
+            "enabled": True,
+        }
+    }
+}
+
 
 def on_load(bot) -> None:
     logger.info("fredag plugin loaded from %s", __file__)

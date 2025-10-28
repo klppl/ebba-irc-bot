@@ -6,6 +6,7 @@ Configuration (config.yaml):
 ```
 plugins:
   chatgpt:
+    enabled: true
     api_key: "<openai_api_key>"
     model: "gpt-4o-mini"  # optional, defaults to gpt-4o-mini
 ```
@@ -41,6 +42,16 @@ DEFAULT_HISTORY_LIMIT = 50
 DEFAULT_MAX_MESSAGE_LENGTH = 450
 DEFAULT_MESSAGE_DELAY = 1.0
 DEFAULT_RATE_LIMIT = 5.0
+
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "chatgpt": {
+            "enabled": False,
+            "api_key": "",
+            "model": DEFAULT_MODEL,
+        }
+    }
+}
 
 
 @dataclass

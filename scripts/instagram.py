@@ -7,7 +7,7 @@ import logging
 import re
 import textwrap
 from dataclasses import dataclass, field
-from typing import Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -25,6 +25,21 @@ DEFAULT_USER_AGENT = (
     "ebba-irc-bot instagram plugin (+https://github.com/alex/ebba-irc-bot)"
 )
 MAX_URLS_PER_MESSAGE = 2
+
+
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "instagram": {
+            "enabled": True,
+            "user_agent": DEFAULT_USER_AGENT,
+            "timeout": 10,
+            "max_urls_per_message": MAX_URLS_PER_MESSAGE,
+            "include_caption": True,
+            "caption_max_chars": 160,
+            "summary_template": "{username}{verified} | likes {likes}{caption_part}",
+        }
+    }
+}
 
 
 @dataclass
@@ -95,9 +110,12 @@ async def _handle_instagram_url(
 
 def _settings_from_config(bot) -> InstagramSettings:
     config = getattr(bot, "config", {})
-    section = config.get("instagram") if isinstance(config, dict) else {}
-    if not isinstance(section, dict):
-        section = {}
+    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
+    section: Dict[str, object] = {}
+    if isinstance(plugins_section, dict):
+        candidate = plugins_section.get("instagram")
+        if isinstance(candidate, dict):
+            section = candidate
 
     defaults = InstagramSettings()
     templates = InstagramTemplates(
