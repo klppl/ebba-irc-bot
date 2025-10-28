@@ -8,7 +8,10 @@ channels:
 - '#kristdemokraterna'
 prefix: .
 owner_nicks:
-- owner
+- nick: owner
+  password: change-me
+  hosts:
+  - '~ident@trusted.host'
 reconnect_delay_secs: 5
 request_timeout_secs: 10
 plugins:

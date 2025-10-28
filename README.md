@@ -21,7 +21,7 @@ Edit `config.yaml` (or override via env vars) for server, nickname, channels, an
 ## Plugin Ops
 - `.plugins` → lists enabled/disabled plugins.
 - `.load foo` / `.unload foo` / `.reload foo` → hot swap modules (`foo` = filename without `.py`).
-- Admins (listed in `owner_nicks`) also get `.say`, `.join`, `.part`.
+- Admins (configured in `owner_nicks` with passwords/host masks) also get `.say`, `.join`, `.part` after authenticating with `.auth <password>` in a private message.
 
 ## Plugin Skeleton
 ```python

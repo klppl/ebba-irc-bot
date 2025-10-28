@@ -4,12 +4,33 @@ import logging
 import signal
 import ssl
 from asyncio import StreamReader, StreamWriter
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Set
 
 import yaml
 
 from .plugin_manager import PluginManager
 from .utils import AsyncRateLimiter, IRCMessage, parse_irc_message
+
+
+@dataclass
+class OwnerRecord:
+    nick: str
+    password: Optional[str] = None
+    hosts: Set[str] = field(default_factory=set)
+
+    def has_host(self, ident_host: str) -> bool:
+        candidate = ident_host.lower()
+        return any(existing.lower() == candidate for existing in self.hosts)
+
+    def add_host(self, ident_host: str) -> bool:
+        ident_host = ident_host.strip()
+        if not ident_host:
+            return False
+        if self.has_host(ident_host):
+            return False
+        self.hosts.add(ident_host)
+        return True
 
 
 class IRCClient:
@@ -27,7 +48,8 @@ class IRCClient:
         self.realname = str(config["realname"])
         self.channels = list(config.get("channels", []))
         self.prefix = str(config.get("prefix", "."))
-        self.owner_nicks = set(config.get("owner_nicks", []))
+        self._owner_records = self._load_owner_records(config)
+        self.owner_nicks = {record.nick for record in self._owner_records.values()}
         self.reconnect_delay = int(config.get("reconnect_delay_secs", 5))
         self.request_timeout = int(config.get("request_timeout_secs", 10))
         self.max_backoff = int(config.get("max_reconnect_delay_secs", 60))
@@ -200,7 +222,7 @@ class IRCClient:
         nick = user.split("!", 1)[0]
         is_private = target.lower() == self.nickname.lower()
         channel = nick if is_private else target
-        await self._handle_builtin_commands(nick, channel, text, is_private)
+        await self._handle_builtin_commands(nick, user, channel, text, is_private)
         self.plugin_manager.dispatch_message(self, user, channel, text)
 
     async def _handle_join(self, message: IRCMessage) -> None:
@@ -335,8 +357,149 @@ class IRCClient:
                 "Failed to write updated channels to config", exc_info=True
             )
 
+    def _load_owner_records(self, config: Dict[str, Any]) -> Dict[str, OwnerRecord]:
+        raw_entries = config.get("owner_nicks", []) or []
+        if not isinstance(raw_entries, list):
+            raise ValueError("Config key 'owner_nicks' must be a list.")
+
+        records: Dict[str, OwnerRecord] = {}
+        normalized_entries = []
+
+        for entry in raw_entries:
+            if isinstance(entry, str):
+                raise ValueError(
+                    "Owner entries must include at least a password or hosts. "
+                    f"Convert '{entry}' to a mapping with 'nick', 'password', and/or 'hosts'."
+                )
+            if not isinstance(entry, dict):
+                continue
+
+            nick = entry.get("nick")
+            if not isinstance(nick, str) or not nick.strip():
+                raise ValueError("Owner entry missing required 'nick' string.")
+            nick = nick.strip()
+
+            password = entry.get("password")
+            if password is not None and not isinstance(password, str):
+                raise ValueError(f"Password for owner '{nick}' must be a string.")
+
+            hosts_field = entry.get("hosts") or []
+            if hosts_field and not isinstance(hosts_field, list):
+                raise ValueError(f"'hosts' for owner '{nick}' must be a list.")
+
+            hosts: Set[str] = set()
+            for host_entry in hosts_field:
+                if isinstance(host_entry, str) and host_entry.strip():
+                    hosts.add(host_entry.strip())
+
+            if not hosts and not password:
+                raise ValueError(
+                    f"Owner '{nick}' must define a password when no hosts are configured."
+                )
+
+            key = nick.lower()
+            if key in records:
+                raise ValueError(f"Duplicate owner nick '{nick}' detected in config.")
+
+            record = OwnerRecord(nick=nick, password=password, hosts=hosts)
+            records[key] = record
+
+            normalized_entry: Dict[str, Any] = {"nick": nick}
+            if password:
+                normalized_entry["password"] = password
+            if hosts:
+                normalized_entry["hosts"] = sorted(hosts)
+            normalized_entries.append(normalized_entry)
+
+        config["owner_nicks"] = normalized_entries
+        return records
+
+    def _persist_owner_records(self) -> None:
+        config_path = self.plugin_manager.get_config_path()
+        if not config_path:
+            return
+
+        serialized = []
+        for record in self._owner_records.values():
+            entry: Dict[str, Any] = {"nick": record.nick}
+            if record.password:
+                entry["password"] = record.password
+            if record.hosts:
+                entry["hosts"] = sorted(record.hosts)
+            serialized.append(entry)
+
+        self.config["owner_nicks"] = serialized
+        self.owner_nicks = {record.nick for record in self._owner_records.values()}
+
+        try:
+            if config_path.exists():
+                with config_path.open("r", encoding="utf-8") as handle:
+                    data = yaml.safe_load(handle) or {}
+            else:
+                data = {}
+        except Exception:
+            self.logger.warning(
+                "Failed to read config file when updating owner records", exc_info=True
+            )
+            return
+
+        data["owner_nicks"] = serialized
+
+        try:
+            with config_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(data, handle, sort_keys=False)
+        except Exception:
+            self.logger.warning(
+                "Failed to write updated owner records to config", exc_info=True
+            )
+
+    def _extract_owner_identity(self, prefix: str) -> tuple[Optional[str], Optional[str]]:
+        if "!" not in prefix:
+            return prefix or None, None
+        nick, rest = prefix.split("!", 1)
+        if "@" not in rest:
+            return nick, None
+        ident, host = rest.split("@", 1)
+        ident = ident.strip()
+        host = host.strip()
+        ident_host = f"{ident}@{host}" if ident and host else None
+        return nick, ident_host
+
+    def _authenticate_owner(self, prefix: str, password: str) -> bool:
+        nick, ident_host = self._extract_owner_identity(prefix)
+        if not nick or not ident_host:
+            return False
+
+        record = self._owner_records.get(nick.lower())
+        if record is None or record.password is None:
+            return False
+
+        if password != record.password:
+            return False
+
+        added = record.add_host(ident_host)
+        if added:
+            self._persist_owner_records()
+        return True
+
+    def _has_owner_access(self, prefix: Optional[str]) -> bool:
+        if not prefix:
+            return False
+        nick, ident_host = self._extract_owner_identity(prefix)
+        if not nick or not ident_host:
+            return False
+
+        record = self._owner_records.get(nick.lower())
+        if record is None:
+            return False
+
+        if not record.hosts:
+            return False
+
+        return record.has_host(ident_host)
+
     async def _handle_builtin_commands(
-        self, nick: str, channel: str, text: str, is_private: bool
+        self, nick: str, prefix: Optional[str], channel: str, text: str, is_private: bool
     ) -> None:
         if not text.startswith(self.prefix):
             return
@@ -348,6 +511,25 @@ class IRCClient:
         command = parts[0].lower()
         args = parts[1:]
         reply_target = nick if is_private else channel
+
+        if command == "auth":
+            if not is_private:
+                await self.privmsg(
+                    reply_target, "Authentication must be sent in a private message."
+                )
+                return
+            if not args:
+                await self.privmsg(nick, f"Usage: {self.prefix}auth <password>")
+                return
+            password = " ".join(args)
+            if not prefix:
+                await self.privmsg(nick, "Authentication failed (missing prefix).")
+                return
+            if self._authenticate_owner(prefix, password):
+                await self.privmsg(nick, "Authentication successful.")
+            else:
+                await self.privmsg(nick, "Authentication failed.")
+            return
 
         if command == "plugins":
             enabled, disabled = self.plugin_manager.list_plugin_status()
@@ -382,7 +564,7 @@ class IRCClient:
             return
 
         if command in {"say", "join", "part"}:
-            if nick not in self.owner_nicks:
+            if not self._has_owner_access(prefix):
                 await self.privmsg(reply_target, "You do not have permission for that command.")
                 return
 
