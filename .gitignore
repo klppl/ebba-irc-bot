@@ -77,3 +77,4 @@ Thumbs.db
 # Local config
 config.yaml
 scripts/*.json
+*.json
