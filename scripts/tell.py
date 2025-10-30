@@ -6,15 +6,13 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_STORAGE_NAME = "tell_messages.json"
 DEFAULT_MAX_PER_TARGET = 5
 DEFAULT_MAX_MESSAGE_LENGTH = 400
-DEFAULT_TRIGGERS = ["tell"]
-
 CONFIG_DEFAULTS = {
     "plugins": {
         "tell": {
@@ -22,10 +20,11 @@ CONFIG_DEFAULTS = {
             "storage_path": DEFAULT_STORAGE_NAME,
             "max_messages_per_target": DEFAULT_MAX_PER_TARGET,
             "max_message_length": DEFAULT_MAX_MESSAGE_LENGTH,
-            "triggers": list(DEFAULT_TRIGGERS),
+            "triggers": ["tell"],
         }
     }
 }
+
 
 
 @dataclass
@@ -62,7 +61,11 @@ class TellSettings:
     )
     max_messages_per_target: int = DEFAULT_MAX_PER_TARGET
     max_message_length: int = DEFAULT_MAX_MESSAGE_LENGTH
-    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
+    triggers: List[str] = field(
+        default_factory=lambda: list(
+            CONFIG_DEFAULTS["plugins"]["tell"]["triggers"]
+        )
+    )
 
 
 @dataclass
@@ -128,7 +131,8 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
 
     if len(parts) < 2:
         loop = asyncio.get_running_loop()
-        primary = state.settings.triggers[0] if state.settings.triggers else DEFAULT_TRIGGERS[0]
+        default_triggers = CONFIG_DEFAULTS["plugins"]["tell"]["triggers"]
+        primary = state.settings.triggers[0] if state.settings.triggers else default_triggers[0]
         loop.create_task(
             bot.privmsg(channel, f"Usage: {prefix}{primary} <nick> <message>")
         )
@@ -188,13 +192,13 @@ def _settings_from_config(bot) -> TellSettings:
     if not isinstance(max_length, int) or max_length < 1:
         max_length = DEFAULT_MAX_MESSAGE_LENGTH
 
-    triggers = _parse_triggers(section.get("triggers"), DEFAULT_TRIGGERS)
-
+    default_triggers = CONFIG_DEFAULTS["plugins"]["tell"]["triggers"]
+    # Triggers are script-defined; ignore config overrides
     return TellSettings(
         storage_path=storage_path,
         max_messages_per_target=max_messages,
         max_message_length=max_length,
-        triggers=triggers,
+        triggers=list(default_triggers),
     )
 
 
@@ -343,21 +347,7 @@ def _origin_key(origin: str) -> str:
     return origin.lower().strip() if origin else ""
 
 
-def _parse_triggers(raw: Any, fallback: Iterable[str]) -> List[str]:
-    if isinstance(raw, str):
-        cleaned = raw.strip().lower()
-        return [cleaned] if cleaned else list(fallback)
-    if isinstance(raw, Iterable):
-        values: List[str] = []
-        for item in raw:
-            try:
-                text = str(item).strip().lower()
-            except Exception:
-                continue
-            if text and text not in values:
-                values.append(text)
-        return values or list(fallback)
-    return list(fallback)
+ 
 
 
 def _has_pending_for(nick: str, channel: str) -> bool:

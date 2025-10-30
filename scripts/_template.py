@@ -9,13 +9,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRIGGERS = ["example"]
-
 CONFIG_DEFAULTS = {
     "plugins": {
         "example": {
             "enabled": False,
-            "triggers": DEFAULT_TRIGGERS,
+            "triggers": ["example"],
         }
     }
 }
@@ -25,7 +23,7 @@ def on_load(bot):
     triggers = _triggers(bot)
     prefix = getattr(bot, "prefix", ".")
     names = ", ".join(f"{prefix}{trigger}" for trigger in triggers) or "no trigger"
-    logger.info("example plugin ready (listening to %s)", names)
+    logger.info("example plugin loaded from %s; responding to %s", __file__, names)
 
 
 def on_unload(bot):
@@ -47,25 +45,8 @@ def on_message(bot, user, channel, message):
 
 
 def _triggers(bot):
-    config = getattr(bot, "config", {}) or {}
-    plugins = config.get("plugins", {}) if isinstance(config, dict) else {}
-    section = plugins.get("example", {}) if isinstance(plugins, dict) else {}
-    raw = section.get("triggers")
-    normalized = _normalize_triggers(raw)
-    return normalized or list(DEFAULT_TRIGGERS)
+    default_triggers = CONFIG_DEFAULTS["plugins"]["example"]["triggers"]
+    return list(default_triggers)
 
 
-def _normalize_triggers(raw):
-    if isinstance(raw, str):
-        text = raw.strip().lower()
-        return [text] if text else []
-
-    if isinstance(raw, (list, tuple, set)):
-        result = []
-        for item in raw:
-            text = str(item).strip().lower()
-            if text and text not in result:
-                result.append(text)
-        return result
-
-    return []
+ 

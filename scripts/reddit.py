@@ -20,18 +20,14 @@ URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-DEFAULT_USER_AGENT = "ebba-irc-bot reddit plugin (+https://github.com/alex/ebba-irc-bot)"
-DEFAULT_TIMEOUT_SECS = 10
-MAX_URLS_PER_MESSAGE = 2
-
-
 CONFIG_DEFAULTS = {
     "plugins": {
         "reddit": {
             "enabled": True,
             "max_chars": 240,
-            "user_agent": DEFAULT_USER_AGENT,
-            "timeout": DEFAULT_TIMEOUT_SECS,
+            "user_agent": "ebba-irc-bot reddit plugin (+https://github.com/alex/ebba-irc-bot)",
+            "timeout": 10,
+            "max_urls_per_message": 2,
             "link_thread_template": "[Reddit] /r/{subreddit} - {title} | {points} | {comments} | {age}",
             "text_thread_template": "[Reddit] /r/{subreddit} (Self) - {title} | {points} | {age} | {extract}",
             "comment_template": "[Reddit] Comment by {author} | {points} | {age} | {extract}",
@@ -39,6 +35,9 @@ CONFIG_DEFAULTS = {
         }
     }
 }
+
+
+ 
 
 
 @dataclass
@@ -51,9 +50,10 @@ class RedditTemplates:
 
 @dataclass
 class RedditSettings:
-    max_chars: int = 240
-    user_agent: str = DEFAULT_USER_AGENT
-    timeout: int = DEFAULT_TIMEOUT_SECS
+    max_chars: int = CONFIG_DEFAULTS["plugins"]["reddit"]["max_chars"]
+    user_agent: str = CONFIG_DEFAULTS["plugins"]["reddit"]["user_agent"]
+    timeout: int = CONFIG_DEFAULTS["plugins"]["reddit"]["timeout"]
+    max_urls_per_message: int = CONFIG_DEFAULTS["plugins"]["reddit"]["max_urls_per_message"]
     templates: RedditTemplates = field(default_factory=RedditTemplates)
 
 
@@ -72,7 +72,7 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
 
     loop = asyncio.get_running_loop()
     settings = _settings_from_config(bot)
-    for url in matches[:MAX_URLS_PER_MESSAGE]:
+    for url in matches[: settings.max_urls_per_message]:
         loop.create_task(_handle_reddit_url(bot, channel, url, settings))
 
 
@@ -140,10 +140,17 @@ def _settings_from_config(bot) -> RedditSettings:
         except ValueError:
             timeout = defaults.timeout
 
+    raw_max_urls = section.get("max_urls_per_message", defaults.max_urls_per_message)
+    try:
+        max_urls = max(1, int(raw_max_urls))
+    except (TypeError, ValueError):
+        max_urls = defaults.max_urls_per_message
+
     return RedditSettings(
         max_chars=max_chars,
         user_agent=user_agent,
         timeout=timeout,
+        max_urls_per_message=max_urls,
         templates=templates,
     )
 

@@ -4,16 +4,16 @@
       "channel": "#ebba",
       "event": "message",
       "nick": "alx",
-      "timestamp": 1761772410.0788236,
+      "timestamp": 1761839990.4347057,
       "user_mask": "alx!~alx@h-155-4-55-156.A444.priv.bahnhof.se"
     }
   },
   "ebba": {
     "#ebba": {
       "channel": "#ebba",
-      "event": "message",
+      "event": "join",
       "nick": "ebba",
-      "timestamp": 1761772410.4413805,
+      "timestamp": 1761839961.2338338,
       "user_mask": "ebba!~ebba@h-155-4-55-156.A444.priv.bahnhof.se"
     }
   },

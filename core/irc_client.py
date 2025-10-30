@@ -53,6 +53,7 @@ class IRCClient:
         self.reconnect_delay = int(config.get("reconnect_delay_secs", 5))
         self.request_timeout = int(config.get("request_timeout_secs", 10))
         self.max_backoff = int(config.get("max_reconnect_delay_secs", 60))
+        self.join_delay_secs = float(config.get("join_delay_secs", 0.4))
         rate_count = int(config.get("privmsg_rate_count", 4))
         rate_window = float(config.get("privmsg_rate_window_secs", 2.0))
         self._rate_limiter = AsyncRateLimiter(rate_count, rate_window)
@@ -210,8 +211,15 @@ class IRCClient:
             await self._handle_privmsg(message)
 
     async def _join_initial_channels(self) -> None:
+        first = True
         for channel in self.channels:
+            if not first and self.join_delay_secs > 0:
+                try:
+                    await asyncio.sleep(self.join_delay_secs)
+                except Exception:
+                    pass
             await self.join(channel)
+            first = False
 
     async def _handle_privmsg(self, message: IRCMessage) -> None:
         if message.prefix is None or message.trailing is None:

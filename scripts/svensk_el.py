@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from statistics import mean
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -16,18 +16,17 @@ logger = logging.getLogger(__name__)
 
 API_URL_TEMPLATE = "https://www.vattenfall.se/api/price/spot/pricearea/{date}/{date}/{area}"
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:60.0) Gecko/20100101 Firefox/60.0"
-DEFAULT_TRIGGERS = ["el"]
-AREA_MAPPING = {"1": "SN1", "2": "SN2", "3": "SN3", "4": "SN4"}
-
-
 CONFIG_DEFAULTS = {
     "plugins": {
         "svensk_el": {
             "enabled": True,
-            "triggers": list(DEFAULT_TRIGGERS),
+            "triggers": ["el"],
         }
     }
 }
+AREA_MAPPING = {"1": "SN1", "2": "SN2", "3": "SN3", "4": "SN4"}
+
+
 
 
 @dataclass(frozen=True)
@@ -38,7 +37,11 @@ class PriceRecord:
 
 @dataclass(frozen=True)
 class SvenskElSettings:
-    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
+    triggers: List[str] = field(
+        default_factory=lambda: list(
+            CONFIG_DEFAULTS["plugins"]["svensk_el"]["triggers"]
+        )
+    )
 
 
 def on_load(bot) -> None:
@@ -82,15 +85,17 @@ def _settings_from_config(bot) -> SvenskElSettings:
         if isinstance(candidate, dict):
             section = candidate
 
-    triggers = _parse_triggers(section.get("triggers"), DEFAULT_TRIGGERS)
-    return SvenskElSettings(triggers=triggers)
+    default_triggers = CONFIG_DEFAULTS["plugins"]["svensk_el"]["triggers"]
+    # Triggers are script-defined; ignore config overrides
+    return SvenskElSettings(triggers=list(default_triggers))
 
 
 async def _handle_command(
     bot, channel: str, argument: str, settings: SvenskElSettings, prefix: str
 ) -> None:
     argument = (argument or "").strip().lower()
-    primary = settings.triggers[0] if settings.triggers else DEFAULT_TRIGGERS[0]
+    default_triggers = CONFIG_DEFAULTS["plugins"]["svensk_el"]["triggers"]
+    primary = settings.triggers[0] if settings.triggers else default_triggers[0]
     if not argument:
         await bot.privmsg(
             channel, f"Användning: {prefix}{primary} [snitt|dag|1|2|3|4]"
@@ -201,18 +206,4 @@ def _fetch_data(area: str, date_str: str) -> List[PriceRecord]:
     return records
 
 
-def _parse_triggers(raw: object, fallback: Iterable[str]) -> List[str]:
-    if isinstance(raw, str):
-        cleaned = raw.strip().lower()
-        return [cleaned] if cleaned else list(fallback)
-    if isinstance(raw, Iterable):
-        values: List[str] = []
-        for item in raw:
-            try:
-                text = str(item).strip().lower()
-            except Exception:
-                continue
-            if text and text not in values:
-                values.append(text)
-        return values or list(fallback)
-    return list(fallback)
+ 

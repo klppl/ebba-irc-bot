@@ -21,19 +21,15 @@ URL_PATTERN = re.compile(
 )
 
 SUPPORTED_PATHS = {"p", "reel", "reels", "tv"}
-DEFAULT_USER_AGENT = (
-    "ebba-irc-bot instagram plugin (+https://github.com/alex/ebba-irc-bot)"
-)
-MAX_URLS_PER_MESSAGE = 2
 
 
 CONFIG_DEFAULTS = {
     "plugins": {
         "instagram": {
             "enabled": True,
-            "user_agent": DEFAULT_USER_AGENT,
+            "user_agent": "ebba-irc-bot instagram plugin (+https://github.com/alex/ebba-irc-bot)",
             "timeout": 10,
-            "max_urls_per_message": MAX_URLS_PER_MESSAGE,
+            "max_urls_per_message": 2,
             "include_caption": True,
             "caption_max_chars": 160,
             "summary_template": "{username}{verified} | likes {likes}{caption_part}",
@@ -49,11 +45,11 @@ class InstagramTemplates:
 
 @dataclass
 class InstagramSettings:
-    user_agent: str = DEFAULT_USER_AGENT
-    timeout: int = 10
-    max_urls_per_message: int = MAX_URLS_PER_MESSAGE
-    include_caption: bool = True
-    caption_max_chars: int = 160
+    user_agent: str = CONFIG_DEFAULTS["plugins"]["instagram"]["user_agent"]
+    timeout: int = CONFIG_DEFAULTS["plugins"]["instagram"]["timeout"]
+    max_urls_per_message: int = CONFIG_DEFAULTS["plugins"]["instagram"]["max_urls_per_message"]
+    include_caption: bool = CONFIG_DEFAULTS["plugins"]["instagram"]["include_caption"]
+    caption_max_chars: int = CONFIG_DEFAULTS["plugins"]["instagram"]["caption_max_chars"]
     templates: InstagramTemplates = field(default_factory=InstagramTemplates)
 
 

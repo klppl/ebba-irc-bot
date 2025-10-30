@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import requests
@@ -16,15 +16,12 @@ API_URL = "https://api.tvmaze.com/singlesearch/shows"
 API_HEADERS = {"User-Agent": "ebba-irc-bot tvmaze plugin (+https://github.com/alex/ebba-irc-bot)"}
 DEFAULT_TIMEZONE = "UTC"
 
-DEFAULT_TRIGGERS = ["next", "n"]
-
-
 CONFIG_DEFAULTS = {
     "plugins": {
         "tvmaze": {
             "enabled": True,
             "timezone": DEFAULT_TIMEZONE,
-            "triggers": list(DEFAULT_TRIGGERS),
+            "triggers": ["next", "n"],
         }
     }
 }
@@ -33,7 +30,11 @@ CONFIG_DEFAULTS = {
 @dataclass
 class TvMazeSettings:
     timezone: ZoneInfo
-    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
+    triggers: List[str] = field(
+        default_factory=lambda: list(
+            CONFIG_DEFAULTS["plugins"]["tvmaze"]["triggers"]
+        )
+    )
 
 
 def on_load(bot) -> None:
@@ -114,26 +115,12 @@ def _settings_from_config(bot) -> TvMazeSettings:
         logger.warning("Invalid timezone '%s'; falling back to UTC", tz_name)
         tz = ZoneInfo(DEFAULT_TIMEZONE)
 
-    triggers = _parse_triggers(section.get("triggers"), DEFAULT_TRIGGERS)
+    default_triggers = CONFIG_DEFAULTS["plugins"]["tvmaze"]["triggers"]
+    # Triggers are script-defined; ignore config overrides
+    return TvMazeSettings(timezone=tz, triggers=list(default_triggers))
 
-    return TvMazeSettings(timezone=tz, triggers=triggers)
 
-
-def _parse_triggers(raw: Any, fallback: Iterable[str]) -> List[str]:
-    if isinstance(raw, str):
-        cleaned = raw.strip().lower()
-        return [cleaned] if cleaned else list(fallback)
-    if isinstance(raw, Iterable):
-        values: List[str] = []
-        for item in raw:
-            try:
-                text = str(item).strip().lower()
-            except Exception:
-                continue
-            if text and text not in values:
-                values.append(text)
-        return values or list(fallback)
-    return list(fallback)
+ 
 
 
 async def _fetch_show_info(query: str, settings: TvMazeSettings, timeout: int) -> Optional[str]:

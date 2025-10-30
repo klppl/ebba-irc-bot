@@ -103,7 +103,7 @@ def on_load(bot) -> None:
         return
 
     state = ChatGPTState(settings=settings, client=client)
-    logger.info("ChatGPT plugin loaded with model %s", settings.model)
+    logger.info("chatgpt plugin loaded from %s with model %s", __file__, settings.model)
 
 
 def on_unload(bot) -> None:

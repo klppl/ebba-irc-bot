@@ -6,29 +6,32 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
 
 URL_PATTERN = re.compile(r"https?://[^\s<>\u0000-\u001f]+", re.IGNORECASE)
-
-DEFAULT_USER_AGENT = "ebba-irc-bot metadata extractor (+https://github.com/alex/ebba-irc-bot)"
-MAX_URLS_PER_MESSAGE = 2
-DEFAULT_TIMEOUT_SECS = 10
 DEFAULT_SUMMARY_TEMPLATE = "{title}{description_part} ({host})"
+CONNECT_TIMEOUT_CAP_SECS = 5
+RETRY_TOTAL = 3
+RETRY_BACKOFF_FACTOR = 0.5
+RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+RETRY_ALLOWED_METHODS = frozenset({"GET", "HEAD"})
 
 
 CONFIG_DEFAULTS = {
     "plugins": {
         "extract_url": {
             "enabled": True,
-            "user_agent": DEFAULT_USER_AGENT,
-            "timeout": DEFAULT_TIMEOUT_SECS,
-            "max_urls_per_message": MAX_URLS_PER_MESSAGE,
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "timeout": 10,
+            "max_urls_per_message": 2,
             "include_description": True,
             "max_description_chars": 200,
             "summary_template": DEFAULT_SUMMARY_TEMPLATE,
@@ -44,11 +47,11 @@ class ExtractTemplates:
 
 @dataclass
 class ExtractSettings:
-    user_agent: str = DEFAULT_USER_AGENT
-    timeout: int = DEFAULT_TIMEOUT_SECS
-    max_urls_per_message: int = MAX_URLS_PER_MESSAGE
-    include_description: bool = True
-    max_description_chars: int = 200
+    user_agent: str = CONFIG_DEFAULTS["plugins"]["extract_url"]["user_agent"]
+    timeout: int = CONFIG_DEFAULTS["plugins"]["extract_url"]["timeout"]
+    max_urls_per_message: int = CONFIG_DEFAULTS["plugins"]["extract_url"]["max_urls_per_message"]
+    include_description: bool = CONFIG_DEFAULTS["plugins"]["extract_url"]["include_description"]
+    max_description_chars: int = CONFIG_DEFAULTS["plugins"]["extract_url"]["max_description_chars"]
     templates: ExtractTemplates = field(default_factory=ExtractTemplates)
 
 
@@ -82,8 +85,20 @@ async def _handle_extract(bot, channel: str, url: str, settings: ExtractSettings
         reply = await loop.run_in_executor(
             None, lambda: _fetch_and_format(url, settings, timeout=bot.request_timeout)
         )
-    except requests.RequestException:
-        logger.warning("Metadata fetch request error for %s", url, exc_info=True)
+    except requests.Timeout as exc:
+        logger.warning("Metadata fetch timed out for %s (%s)", url, exc)
+        return
+    except requests.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", "unknown")
+        reason = getattr(response, "reason", "")
+        if reason:
+            logger.warning("Metadata fetch HTTP %s %s for %s", status, reason, url)
+        else:
+            logger.warning("Metadata fetch HTTP %s for %s", status, url)
+        return
+    except requests.RequestException as exc:
+        logger.warning("Metadata fetch request error for %s: %s", url, exc)
         return
     except Exception:
         logger.exception("Metadata lookup failed for %s", url)
@@ -96,7 +111,7 @@ async def _handle_extract(bot, channel: str, url: str, settings: ExtractSettings
 def _settings_from_config(bot) -> ExtractSettings:
     config = getattr(bot, "config", {})
     plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section: Dict[str, object] = {}
+    section: Dict[str, Any] = {}
     if isinstance(plugins_section, dict):
         candidate = plugins_section.get("extract_url")
         if isinstance(candidate, dict):
@@ -125,12 +140,38 @@ def _settings_from_config(bot) -> ExtractSettings:
 
 
 def _fetch_and_format(url: str, settings: ExtractSettings, timeout: int) -> Optional[str]:
-    headers = {"User-Agent": settings.user_agent, "Accept": "text/html,application/xhtml+xml"}
+    headers = {
+        "User-Agent": settings.user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+    }
     request_timeout = max(1, min(settings.timeout, timeout or settings.timeout))
-    response = requests.get(url, headers=headers, timeout=request_timeout)
+    connect_timeout = min(CONNECT_TIMEOUT_CAP_SECS, request_timeout)
+
+    with requests.Session() as session:
+        retry = Retry(
+            total=RETRY_TOTAL,
+            read=RETRY_TOTAL,
+            connect=RETRY_TOTAL,
+            backoff_factor=RETRY_BACKOFF_FACTOR,
+            status_forcelist=RETRY_STATUS_CODES,
+            allowed_methods=RETRY_ALLOWED_METHODS,
+            raise_on_status=False,
+            respect_retry_after_header=True,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        response = session.get(
+            url,
+            headers=headers,
+            timeout=(connect_timeout, request_timeout),
+        )
     response.raise_for_status()
 
-    content_type = response.headers.get("Content-Type", "").lower()
+    content_type = (response.headers.get("Content-Type") or "").lower()
     if "text/html" not in content_type:
         logger.debug("Skipping non-HTML content for %s (%s)", url, content_type)
         return None
@@ -212,8 +253,8 @@ class _MetadataParser(HTMLParser):
         if not content:
             return
 
-        prop = attr_map.get("property", "").lower()
-        name = attr_map.get("name", "").lower()
+        prop = (attr_map.get("property") or "").lower()
+        name = (attr_map.get("name") or "").lower()
 
         if prop.startswith("og:"):
             self._meta[prop] = content

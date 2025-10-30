@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Iterable, Tuple
+from typing import Tuple
 
 import requests
 
@@ -20,12 +20,11 @@ CONFIG_DEFAULTS = {
     }
 }
 
-DEFAULT_TRIGGERS: Tuple[str, ...] = ("bitcoin", "b")
-
-
 @dataclass
 class BitcoinSettings:
-    triggers: Tuple[str, ...] = DEFAULT_TRIGGERS
+    triggers: Tuple[str, ...] = tuple(
+        CONFIG_DEFAULTS["plugins"]["bitcoin"]["triggers"]
+    )
 
 
 settings: BitcoinSettings = BitcoinSettings()
@@ -95,24 +94,9 @@ def _settings_from_config(bot) -> BitcoinSettings:
         if isinstance(candidate, dict):
             section = candidate
 
-    triggers = _parse_triggers(section.get("triggers"), DEFAULT_TRIGGERS)
-    return BitcoinSettings(triggers=triggers)
+    default_triggers = tuple(CONFIG_DEFAULTS["plugins"]["bitcoin"]["triggers"])
+    # Triggers are script-defined; ignore config overrides
+    return BitcoinSettings(triggers=default_triggers)
 
 
-def _parse_triggers(raw: object, fallback: Iterable[str]) -> Tuple[str, ...]:
-    if isinstance(raw, str):
-        cleaned = raw.strip()
-        if cleaned:
-            return (cleaned.lower(),)
-    elif isinstance(raw, Iterable):
-        normalized = []
-        for item in raw:
-            try:
-                text = str(item).strip()
-            except Exception:
-                continue
-            if text:
-                normalized.append(text.lower())
-        if normalized:
-            return tuple(dict.fromkeys(normalized))
-    return tuple(fallback)
+ 

@@ -7,18 +7,25 @@ import datetime as dt
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_USER_AGENT = "ebba-irc-bot smhi plugin (+https://github.com/alex/ebba-irc-bot)"
-DEFAULT_LANGUAGE = "sv-SE"
-DEFAULT_TIMEOUT = 15
 SUPPORTED_LANGUAGES = {"sv-SE", "en-US"}
 
-DEFAULT_TRIGGERS = ["weather", "vädret", "smhi"]
+CONFIG_DEFAULTS = {
+    "plugins": {
+        "smhi": {
+            "enabled": True,
+            "language": "sv-SE",
+            "user_agent": "ebba-irc-bot smhi plugin (+https://github.com/alex/ebba-irc-bot)",
+            "timeout": 15,
+            "triggers": ["weather", "vädret", "smhi"],
+        }
+    }
+}
 
 WEATHER_SYMBOLS: Dict[int, Dict[str, str]] = {
     1: {"en-US": "Clear sky", "sv-SE": "Klar himmel"},
@@ -77,25 +84,16 @@ WIND_SPEED_DESCRIPTIONS: Dict[int, Dict[str, str]] = {
 }
 
 
-CONFIG_DEFAULTS = {
-    "plugins": {
-        "smhi": {
-            "enabled": True,
-            "language": DEFAULT_LANGUAGE,
-            "user_agent": DEFAULT_USER_AGENT,
-            "timeout": DEFAULT_TIMEOUT,
-            "triggers": list(DEFAULT_TRIGGERS),
-        }
-    }
-}
-
-
 @dataclass
 class SMHISettings:
-    language: str = DEFAULT_LANGUAGE
-    user_agent: str = DEFAULT_USER_AGENT
-    timeout: int = DEFAULT_TIMEOUT
-    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
+    language: str = CONFIG_DEFAULTS["plugins"]["smhi"]["language"]
+    user_agent: str = CONFIG_DEFAULTS["plugins"]["smhi"]["user_agent"]
+    timeout: int = CONFIG_DEFAULTS["plugins"]["smhi"]["timeout"]
+    triggers: List[str] = field(
+        default_factory=lambda: list(
+            CONFIG_DEFAULTS["plugins"]["smhi"]["triggers"]
+        )
+    )
 
 
 @dataclass
@@ -200,27 +198,29 @@ def _settings_from_config(bot) -> SMHISettings:
             if isinstance(candidate, dict):
                 plugin_section = candidate
 
-    language_raw = plugin_section.get("language", DEFAULT_LANGUAGE)
+    defaults = CONFIG_DEFAULTS["plugins"]["smhi"]
+    language_raw = plugin_section.get("language", defaults["language"])
     language = str(language_raw).strip()
     if language not in SUPPORTED_LANGUAGES:
-        language = DEFAULT_LANGUAGE
+        language = defaults["language"]
 
-    user_agent = str(plugin_section.get("user_agent", DEFAULT_USER_AGENT)).strip() or DEFAULT_USER_AGENT
+    user_agent_default = defaults["user_agent"]
+    user_agent = str(plugin_section.get("user_agent", user_agent_default)).strip() or user_agent_default
 
-    timeout_raw = plugin_section.get("timeout", DEFAULT_TIMEOUT)
+    timeout_raw = plugin_section.get("timeout", defaults["timeout"])
     try:
         timeout_value = int(timeout_raw)
     except (TypeError, ValueError):
-        timeout_value = DEFAULT_TIMEOUT
+        timeout_value = defaults["timeout"]
     timeout_value = max(1, timeout_value)
 
-    triggers = _parse_triggers(plugin_section.get("triggers"), DEFAULT_TRIGGERS)
-
+    default_triggers = defaults["triggers"]
+    # Triggers are script-defined; ignore config overrides
     return SMHISettings(
         language=language,
         user_agent=user_agent,
         timeout=timeout_value,
-        triggers=triggers,
+        triggers=list(default_triggers),
     )
 
 
@@ -470,18 +470,4 @@ def _format_timestamp(timestamp: str, language: str) -> str:
     return when.strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _parse_triggers(raw: Any, fallback: Iterable[str]) -> List[str]:
-    if isinstance(raw, str):
-        text = raw.strip().lower()
-        return [text] if text else list(fallback)
-    if isinstance(raw, Iterable):
-        values: List[str] = []
-        for item in raw:
-            try:
-                text = str(item).strip().lower()
-            except Exception:
-                continue
-            if text and text not in values:
-                values.append(text)
-        return values or list(fallback)
-    return list(fallback)
+ 

@@ -6,7 +6,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +21,6 @@ CONFIG_DEFAULTS = {
         }
     }
 }
-
-DEFAULT_TRIGGERS = ["seen"]
 
 
 @dataclass
@@ -61,7 +59,11 @@ class SeenSettings:
     storage_path: Path = field(
         default_factory=lambda: Path(__file__).resolve().parent / DEFAULT_STORAGE_NAME
     )
-    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
+    triggers: List[str] = field(
+        default_factory=lambda: list(
+            CONFIG_DEFAULTS["plugins"]["seen"]["triggers"]
+        )
+    )
 
 
 @dataclass
@@ -123,7 +125,8 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
 
     if len(parts) == 1 or not parts[1].strip():
         loop = asyncio.get_running_loop()
-        primary = state.settings.triggers[0] if state.settings.triggers else DEFAULT_TRIGGERS[0]
+        default_triggers = CONFIG_DEFAULTS["plugins"]["seen"]["triggers"]
+        primary = state.settings.triggers[0] if state.settings.triggers else default_triggers[0]
         loop.create_task(bot.privmsg(channel, f"Usage: {prefix}{primary} <nick>"))
         return
 
@@ -247,9 +250,9 @@ def _settings_from_config(bot) -> SeenSettings:
         else:
             storage_path = candidate_path
 
-    triggers = _parse_triggers(section.get("triggers"), DEFAULT_TRIGGERS)
-
-    return SeenSettings(storage_path=storage_path, triggers=triggers)
+    default_triggers = CONFIG_DEFAULTS["plugins"]["seen"]["triggers"]
+    # Triggers are script-defined; ignore config overrides
+    return SeenSettings(storage_path=storage_path, triggers=list(default_triggers))
 
 
 def _load_entries(path: Path) -> Dict[str, Dict[str, SeenEntry]]:
@@ -300,22 +303,7 @@ def _nick_from_prefix(prefix: str) -> str:
     return prefix.split("!", 1)[0]
 
 
-def _parse_triggers(raw: Any, fallback: Iterable[str]) -> List[str]:
-    if isinstance(raw, str):
-        candidate = raw.strip().lower()
-        return [candidate] if candidate else list(fallback)
-    elif isinstance(raw, Iterable):
-        collected: List[str] = []
-        for item in raw:
-            try:
-                text = str(item).strip().lower()
-            except Exception:
-                continue
-            if text:
-                if text not in collected:
-                    collected.append(text)
-        return collected or list(fallback)
-    return list(fallback)
+ 
 
 
 def _ingest_loaded_entry(

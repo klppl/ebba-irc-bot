@@ -19,19 +19,16 @@ URL_PATTERN = re.compile(
 )
 
 OEMBED_ENDPOINT = "https://publish.twitter.com/oembed"
-DEFAULT_TEMPLATE = "{name} (@{nick}): {content} - {date}"
-DEFAULT_USER_AGENT = "ebba-irc-bot twitter plugin (+https://github.com/alex/ebba-irc-bot)"
-MAX_URLS_PER_MESSAGE = 2
 
 
 CONFIG_DEFAULTS = {
     "plugins": {
         "twitter": {
             "enabled": True,
-            "template": DEFAULT_TEMPLATE,
-            "user_agent": DEFAULT_USER_AGENT,
+            "template": "{name} (@{nick}): {content} - {date}",
+            "user_agent": "ebba-irc-bot twitter plugin (+https://github.com/alex/ebba-irc-bot)",
             "timeout": 10,
-            "max_urls_per_message": MAX_URLS_PER_MESSAGE,
+            "max_urls_per_message": 2,
             "max_content_chars": 240,
         }
     }
@@ -41,11 +38,11 @@ CONFIG_DEFAULTS = {
 @dataclass
 class TwitterSettings:
     enabled: bool = True
-    template: str = DEFAULT_TEMPLATE
-    user_agent: str = DEFAULT_USER_AGENT
-    timeout: int = 10
-    max_urls_per_message: int = MAX_URLS_PER_MESSAGE
-    max_content_chars: int = 240
+    template: str = CONFIG_DEFAULTS["plugins"]["twitter"]["template"]
+    user_agent: str = CONFIG_DEFAULTS["plugins"]["twitter"]["user_agent"]
+    timeout: int = CONFIG_DEFAULTS["plugins"]["twitter"]["timeout"]
+    max_urls_per_message: int = CONFIG_DEFAULTS["plugins"]["twitter"]["max_urls_per_message"]
+    max_content_chars: int = CONFIG_DEFAULTS["plugins"]["twitter"]["max_content_chars"]
 
 
 def on_load(bot) -> None:
