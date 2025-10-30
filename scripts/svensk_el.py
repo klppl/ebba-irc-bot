@@ -3,11 +3,11 @@
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from statistics import mean
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 API_URL_TEMPLATE = "https://www.vattenfall.se/api/price/spot/pricearea/{date}/{date}/{area}"
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:60.0) Gecko/20100101 Firefox/60.0"
-COMMANDS = {"el"}
+DEFAULT_TRIGGERS = ["el"]
 AREA_MAPPING = {"1": "SN1", "2": "SN2", "3": "SN3", "4": "SN4"}
 
 
@@ -24,6 +24,7 @@ CONFIG_DEFAULTS = {
     "plugins": {
         "svensk_el": {
             "enabled": True,
+            "triggers": list(DEFAULT_TRIGGERS),
         }
     }
 }
@@ -35,8 +36,15 @@ class PriceRecord:
     timestamp: str
 
 
+@dataclass(frozen=True)
+class SvenskElSettings:
+    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
+
+
 def on_load(bot) -> None:
-    logger.info("svensk_el plugin loaded from %s", __file__)
+    settings = _settings_from_config(bot)
+    trigger_text = ", ".join(f"{bot.prefix}{trigger}" for trigger in settings.triggers)
+    logger.info("svensk_el plugin loaded from %s; responding to %s", __file__, trigger_text)
 
 
 def on_unload(bot) -> None:
@@ -44,6 +52,8 @@ def on_unload(bot) -> None:
 
 
 def on_message(bot, user: str, channel: str, message: str) -> None:
+    settings = _settings_from_config(bot)
+
     prefix = bot.prefix
     if not message.startswith(prefix):
         return
@@ -53,19 +63,38 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
         return
 
     parts = command_line.split(maxsplit=1)
-    if parts[0].lower() not in COMMANDS:
+    command = parts[0].lower()
+    if command not in settings.triggers:
         return
 
     arg = parts[1].strip() if len(parts) > 1 else ""
 
     loop = asyncio.get_running_loop()
-    loop.create_task(_handle_command(bot, channel, arg))
+    loop.create_task(_handle_command(bot, channel, arg, settings, prefix))
 
 
-async def _handle_command(bot, channel: str, argument: str) -> None:
+def _settings_from_config(bot) -> SvenskElSettings:
+    config = getattr(bot, "config", {})
+    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
+    section = {}
+    if isinstance(plugins_section, dict):
+        candidate = plugins_section.get("svensk_el")
+        if isinstance(candidate, dict):
+            section = candidate
+
+    triggers = _parse_triggers(section.get("triggers"), DEFAULT_TRIGGERS)
+    return SvenskElSettings(triggers=triggers)
+
+
+async def _handle_command(
+    bot, channel: str, argument: str, settings: SvenskElSettings, prefix: str
+) -> None:
     argument = (argument or "").strip().lower()
+    primary = settings.triggers[0] if settings.triggers else DEFAULT_TRIGGERS[0]
     if not argument:
-        await bot.privmsg(channel, "Användning: .el [snitt|dag|1|2|3|4]")
+        await bot.privmsg(
+            channel, f"Användning: {prefix}{primary} [snitt|dag|1|2|3|4]"
+        )
         return
 
     today = date.today().strftime("%Y-%m-%d")
@@ -80,7 +109,7 @@ async def _handle_command(bot, channel: str, argument: str) -> None:
             area_label = f"SE{argument}"
             response = await _fetch_area_details(area_label, area_code, today)
         else:
-            response = "Användning: .el [snitt|dag|1|2|3|4]"
+            response = f"Användning: {prefix}{primary} [snitt|dag|1|2|3|4]"
     except Exception as exc:
         logger.exception("svensk_el command failed")
         response = f"Error: {exc}"
@@ -170,3 +199,20 @@ def _fetch_data(area: str, date_str: str) -> List[PriceRecord]:
             logger.debug("Skipping malformed record: %s", item)
             continue
     return records
+
+
+def _parse_triggers(raw: object, fallback: Iterable[str]) -> List[str]:
+    if isinstance(raw, str):
+        cleaned = raw.strip().lower()
+        return [cleaned] if cleaned else list(fallback)
+    if isinstance(raw, Iterable):
+        values: List[str] = []
+        for item in raw:
+            try:
+                text = str(item).strip().lower()
+            except Exception:
+                continue
+            if text and text not in values:
+                values.append(text)
+        return values or list(fallback)
+    return list(fallback)

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
 
@@ -18,7 +18,7 @@ DEFAULT_LANGUAGE = "sv-SE"
 DEFAULT_TIMEOUT = 15
 SUPPORTED_LANGUAGES = {"sv-SE", "en-US"}
 
-TRIGGERS = {"weather", "vädret", "smhi"}
+DEFAULT_TRIGGERS = ["weather", "vädret", "smhi"]
 
 WEATHER_SYMBOLS: Dict[int, Dict[str, str]] = {
     1: {"en-US": "Clear sky", "sv-SE": "Klar himmel"},
@@ -84,6 +84,7 @@ CONFIG_DEFAULTS = {
             "language": DEFAULT_LANGUAGE,
             "user_agent": DEFAULT_USER_AGENT,
             "timeout": DEFAULT_TIMEOUT,
+            "triggers": list(DEFAULT_TRIGGERS),
         }
     }
 }
@@ -94,6 +95,7 @@ class SMHISettings:
     language: str = DEFAULT_LANGUAGE
     user_agent: str = DEFAULT_USER_AGENT
     timeout: int = DEFAULT_TIMEOUT
+    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
 
 
 @dataclass
@@ -117,7 +119,9 @@ class SMHIForecast:
 
 
 def on_load(bot) -> None:
-    logger.info("smhi plugin loaded from %s", __file__)
+    settings = _settings_from_config(bot)
+    trigger_text = ", ".join(f"{bot.prefix}{trigger}" for trigger in settings.triggers)
+    logger.info("smhi plugin loaded from %s; responding to %s", __file__, trigger_text)
 
 
 def on_unload(bot) -> None:
@@ -125,6 +129,8 @@ def on_unload(bot) -> None:
 
 
 def on_message(bot, user: str, channel: str, message: str) -> None:
+    settings = _settings_from_config(bot)
+
     prefix = bot.prefix
     if not message.startswith(prefix):
         return
@@ -135,7 +141,7 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
 
     parts = command_line.split(maxsplit=1)
     command = parts[0].lower()
-    if command not in TRIGGERS:
+    if command not in settings.triggers:
         return
 
     if len(parts) == 1 or not parts[1].strip():
@@ -143,18 +149,20 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
             "sv-SE": "Användning: {prefix}{cmd} <stad>",
             "en-US": "Usage: {prefix}{cmd} <city>",
         }
-        settings = _settings_from_config(bot)
         reply = response.get(settings.language, response["en-US"]).format(prefix=prefix, cmd=command)
         asyncio.get_running_loop().create_task(bot.privmsg(channel, reply))
         return
 
     city = parts[1].strip()
     loop = asyncio.get_running_loop()
-    loop.create_task(_handle_weather_command(bot, channel, city))
+    loop.create_task(_handle_weather_command(bot, channel, city, settings))
 
 
-async def _handle_weather_command(bot, channel: str, city: str) -> None:
-    settings = _settings_from_config(bot)
+async def _handle_weather_command(
+    bot, channel: str, city: str, settings: Optional[SMHISettings] = None
+) -> None:
+    if settings is None:
+        settings = _settings_from_config(bot)
     timeout = settings.timeout
     request_timeout = getattr(bot, "request_timeout", 0)
     if isinstance(request_timeout, (int, float)) and request_timeout > 0:
@@ -206,7 +214,14 @@ def _settings_from_config(bot) -> SMHISettings:
         timeout_value = DEFAULT_TIMEOUT
     timeout_value = max(1, timeout_value)
 
-    return SMHISettings(language=language, user_agent=user_agent, timeout=timeout_value)
+    triggers = _parse_triggers(plugin_section.get("triggers"), DEFAULT_TRIGGERS)
+
+    return SMHISettings(
+        language=language,
+        user_agent=user_agent,
+        timeout=timeout_value,
+        triggers=triggers,
+    )
 
 
 def _fetch_forecast_for_city(
@@ -453,3 +468,20 @@ def _format_timestamp(timestamp: str, language: str) -> str:
     if language == "sv-SE":
         return when.strftime("%Y-%m-%d %H:%M")
     return when.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _parse_triggers(raw: Any, fallback: Iterable[str]) -> List[str]:
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        return [text] if text else list(fallback)
+    if isinstance(raw, Iterable):
+        values: List[str] = []
+        for item in raw:
+            try:
+                text = str(item).strip().lower()
+            except Exception:
+                continue
+            if text and text not in values:
+                values.append(text)
+        return values or list(fallback)
+    return list(fallback)

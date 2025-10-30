@@ -2,9 +2,9 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
 import requests
@@ -16,7 +16,7 @@ API_URL = "https://api.tvmaze.com/singlesearch/shows"
 API_HEADERS = {"User-Agent": "ebba-irc-bot tvmaze plugin (+https://github.com/alex/ebba-irc-bot)"}
 DEFAULT_TIMEZONE = "UTC"
 
-COMMANDS = {"next", "n"}
+DEFAULT_TRIGGERS = ["next", "n"]
 
 
 CONFIG_DEFAULTS = {
@@ -24,6 +24,7 @@ CONFIG_DEFAULTS = {
         "tvmaze": {
             "enabled": True,
             "timezone": DEFAULT_TIMEZONE,
+            "triggers": list(DEFAULT_TRIGGERS),
         }
     }
 }
@@ -32,10 +33,17 @@ CONFIG_DEFAULTS = {
 @dataclass
 class TvMazeSettings:
     timezone: ZoneInfo
+    triggers: List[str] = field(default_factory=lambda: list(DEFAULT_TRIGGERS))
 
 
 def on_load(bot) -> None:
-    logger.info("tvmaze plugin loaded from %s", __file__)
+    settings = _settings_from_config(bot)
+    trigger_text = ", ".join(f"{bot.prefix}{trigger}" for trigger in settings.triggers)
+    logger.info(
+        "tvmaze plugin loaded from %s; responding to %s",
+        __file__,
+        trigger_text,
+    )
 
 
 def on_unload(bot) -> None:
@@ -43,6 +51,8 @@ def on_unload(bot) -> None:
 
 
 def on_message(bot, user: str, channel: str, message: str) -> None:
+    settings = _settings_from_config(bot)
+
     prefix = bot.prefix
     if not message.startswith(prefix):
         return
@@ -53,18 +63,18 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
 
     parts = command_line.split(maxsplit=1)
     command = parts[0].lower()
-    if command not in COMMANDS:
+    if command not in settings.triggers:
         return
 
     query = parts[1].strip() if len(parts) > 1 else ""
 
     loop = asyncio.get_running_loop()
-    loop.create_task(_handle_tvmaze(bot, channel, query))
+    loop.create_task(_handle_tvmaze(bot, channel, query, settings))
 
 
-async def _handle_tvmaze(bot, channel: str, query: str) -> None:
-    settings = _settings_from_config(bot)
-
+async def _handle_tvmaze(
+    bot, channel: str, query: str, settings: TvMazeSettings
+) -> None:
     if not query:
         await bot.privmsg(channel, "🎬 Enter a TV show to search for.")
         return
@@ -91,9 +101,11 @@ def _settings_from_config(bot) -> TvMazeSettings:
     config = getattr(bot, "config", {})
     plugins_section = config.get("plugins") if isinstance(config, dict) else {}
     tz_name = DEFAULT_TIMEZONE
+    section: Dict[str, Any] = {}
     if isinstance(plugins_section, dict):
         candidate = plugins_section.get("tvmaze")
         if isinstance(candidate, dict):
+            section = candidate
             tz_name = candidate.get("timezone", DEFAULT_TIMEZONE)
 
     try:
@@ -102,7 +114,26 @@ def _settings_from_config(bot) -> TvMazeSettings:
         logger.warning("Invalid timezone '%s'; falling back to UTC", tz_name)
         tz = ZoneInfo(DEFAULT_TIMEZONE)
 
-    return TvMazeSettings(timezone=tz)
+    triggers = _parse_triggers(section.get("triggers"), DEFAULT_TRIGGERS)
+
+    return TvMazeSettings(timezone=tz, triggers=triggers)
+
+
+def _parse_triggers(raw: Any, fallback: Iterable[str]) -> List[str]:
+    if isinstance(raw, str):
+        cleaned = raw.strip().lower()
+        return [cleaned] if cleaned else list(fallback)
+    if isinstance(raw, Iterable):
+        values: List[str] = []
+        for item in raw:
+            try:
+                text = str(item).strip().lower()
+            except Exception:
+                continue
+            if text and text not in values:
+                values.append(text)
+        return values or list(fallback)
+    return list(fallback)
 
 
 async def _fetch_show_info(query: str, settings: TvMazeSettings, timeout: int) -> Optional[str]:

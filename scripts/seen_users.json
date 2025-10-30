@@ -1,16 +1,29 @@
 {
   "alx": {
-    "channel": "#ebba",
-    "event": "message",
-    "nick": "alx",
-    "timestamp": 1761687754.7955184,
-    "user_mask": "alx!~alx@h-155-4-55-156.A444.priv.bahnhof.se"
+    "#ebba": {
+      "channel": "#ebba",
+      "event": "message",
+      "nick": "alx",
+      "timestamp": 1761772410.0788236,
+      "user_mask": "alx!~alx@h-155-4-55-156.A444.priv.bahnhof.se"
+    }
   },
   "ebba": {
-    "channel": "#ebba2",
-    "event": "join",
-    "nick": "ebba",
-    "timestamp": 1761687751.295719,
-    "user_mask": "ebba!~ebba@h-155-4-55-156.A444.priv.bahnhof.se"
+    "#ebba": {
+      "channel": "#ebba",
+      "event": "message",
+      "nick": "ebba",
+      "timestamp": 1761772410.4413805,
+      "user_mask": "ebba!~ebba@h-155-4-55-156.A444.priv.bahnhof.se"
+    }
+  },
+  "ebba_": {
+    "#ebba": {
+      "channel": "#ebba",
+      "event": "join",
+      "nick": "ebba_",
+      "timestamp": 1761803716.1799603,
+      "user_mask": "ebba_!~ebba@155.4.55.156"
+    }
   }
 }
