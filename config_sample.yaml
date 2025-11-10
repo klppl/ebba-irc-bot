@@ -40,3 +40,6 @@ plugins:
     enabled: true
   twitter:
     enabled: true
+  ignore:
+    enabled: true
+    ignored_nicks: []

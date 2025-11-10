@@ -57,6 +57,7 @@ class IRCClient:
         rate_count = int(config.get("privmsg_rate_count", 4))
         rate_window = float(config.get("privmsg_rate_window_secs", 2.0))
         self._rate_limiter = AsyncRateLimiter(rate_count, rate_window)
+        self.ignored_nicks: Set[str] = set()
 
         self.reader: Optional[StreamReader] = None
         self.writer: Optional[StreamWriter] = None
@@ -230,6 +231,9 @@ class IRCClient:
         nick = user.split("!", 1)[0]
         is_private = target.lower() == self.nickname.lower()
         channel = nick if is_private else target
+        if nick.lower() in getattr(self, "ignored_nicks", set()):
+            self.logger.debug("Ignoring message from %s due to ignore list", nick)
+            return
         await self._handle_builtin_commands(nick, user, channel, text, is_private)
         self.plugin_manager.dispatch_message(self, user, channel, text)
 
