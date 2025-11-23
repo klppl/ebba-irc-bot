@@ -222,6 +222,17 @@ class IRCClient:
             await self.join(channel)
             first = False
 
+    def refresh_runtime_settings(self) -> None:
+        self.prefix = str(self.config.get("prefix", self.prefix))
+        self.reconnect_delay = int(self.config.get("reconnect_delay_secs", self.reconnect_delay))
+        self.request_timeout = int(self.config.get("request_timeout_secs", self.request_timeout))
+        self.max_backoff = int(self.config.get("max_reconnect_delay_secs", self.max_backoff))
+        self.join_delay_secs = float(self.config.get("join_delay_secs", self.join_delay_secs))
+
+        channels = self.config.get("channels")
+        if isinstance(channels, list):
+            self.channels = list(channels)
+
     async def _handle_privmsg(self, message: IRCMessage) -> None:
         if message.prefix is None or message.trailing is None:
             return
@@ -558,7 +569,7 @@ class IRCClient:
             plugin_name = args[0]
             try:
                 if command == "load":
-                    self.plugin_manager.load(plugin_name, self)
+                    self.plugin_manager.load(plugin_name, self, refresh_config=True)
                 elif command == "unload":
                     self.plugin_manager.unload(plugin_name, self)
                 else:

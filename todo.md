@@ -1,0 +1,5 @@
+### TODO (clarified for future implementation)
+- [ ] 1) Non-blocking plugin dispatch (`core/plugin_manager.py`): on_message/on_join handlers currently run inline on the event loop. Wrap each handler call in `asyncio.create_task` (or require async handlers) and consider timeouts/exception guards so one slow/bad plugin cannot stall message handling or keepalive.
+- [ ] 2) Harden URL previews (`scripts/extract_url.py`): the fetcher reads full responses with no host/scheme vetting. Add streaming with a maximum byte budget, check `Content-Length`, and reject private/loopback IPs and non-HTTP(S) schemes to avoid SSRF and large-page DoS; keep retries/timeouts reasonable.
+- [ ] 3) Bound outbound send queue (`core/irc_client.py`): `_send_queue` is unbounded. Give it a `maxsize` and apply backpressure or a drop policy so plugin floods cannot grow memory indefinitely during slow sends/reconnects.
+- [ ] 4) Atomic, synchronized config writes (`core/irc_client.py`, `scripts/ignore.py`): current YAML rewrites are unsynchronized and non-atomic. Use a file lock plus write-to-temp-then-rename to prevent clobbering or truncated config when multiple updates happen close together.

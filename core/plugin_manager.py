@@ -65,7 +65,10 @@ class PluginManager:
             raise
         return module
 
-    def load(self, plugin_name: str, bot) -> None:
+    def load(self, plugin_name: str, bot, refresh_config: bool = False) -> None:
+        if refresh_config:
+            self._refresh_bot_config(bot)
+
         if plugin_name in self._plugins:
             raise RuntimeError(f"Plugin '{plugin_name}' is already loaded")
 
@@ -106,6 +109,7 @@ class PluginManager:
         self.logger.info("Unloaded plugin '%s'", plugin_name)
 
     def reload(self, plugin_name: str, bot) -> None:
+        self._refresh_bot_config(bot)
         self.unload(plugin_name, bot)
         self.load(plugin_name, bot)
 
@@ -318,3 +322,29 @@ class PluginManager:
                 yaml.safe_dump(data, handle, sort_keys=False)
         except Exception:
             self.logger.warning("Failed to write plugin enabled flag for '%s'", plugin_name, exc_info=True)
+
+    def _refresh_bot_config(self, bot) -> None:
+        if not self._config_path or not self._config_path.exists():
+            return
+
+        try:
+            with self._config_path.open("r", encoding="utf-8") as handle:
+                data = yaml.safe_load(handle) or {}
+        except Exception:
+            self.logger.warning("Failed to reload config.yaml from disk", exc_info=True)
+            return
+
+        if not isinstance(data, dict):
+            self.logger.warning("Config reload skipped: root is not a mapping")
+            return
+
+        bot_config = getattr(bot, "config", None)
+        if isinstance(bot_config, dict):
+            bot_config.clear()
+            bot_config.update(data)
+            refresher = getattr(bot, "refresh_runtime_settings", None)
+            if callable(refresher):
+                try:
+                    refresher()
+                except Exception:
+                    self.logger.exception("Failed to refresh runtime settings after config reload")
