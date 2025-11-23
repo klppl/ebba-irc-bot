@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Dict, Iterable, Set
 
-import yaml
+from core.utils import atomic_write_yaml, file_lock, load_yaml_file
 
 logger = logging.getLogger(__name__)
 
@@ -151,36 +151,28 @@ def _persist_ignored(bot, ignored: Set[str]) -> None:
     if not config_path:
         return
 
-    try:
-        if config_path.exists():
-            with config_path.open("r", encoding="utf-8") as handle:
-                data = yaml.safe_load(handle) or {}
-        else:
+    lock_path = config_path.with_suffix(config_path.suffix + ".lock")
+    with file_lock(lock_path):
+        data = load_yaml_file(config_path)
+        if not isinstance(data, dict):
             data = {}
-    except Exception:
-        logger.warning("Failed to read config file when persisting ignore list", exc_info=True)
-        return
 
-    if not isinstance(data, dict):
-        data = {}
+        plugins_section = data.setdefault("plugins", {})
+        if not isinstance(plugins_section, dict):
+            plugins_section = {}
+            data["plugins"] = plugins_section
 
-    plugins_section = data.setdefault("plugins", {})
-    if not isinstance(plugins_section, dict):
-        plugins_section = {}
-        data["plugins"] = plugins_section
+        ignore_section = plugins_section.setdefault("ignore", {})
+        if not isinstance(ignore_section, dict):
+            ignore_section = {}
+            plugins_section["ignore"] = ignore_section
 
-    ignore_section = plugins_section.setdefault("ignore", {})
-    if not isinstance(ignore_section, dict):
-        ignore_section = {}
-        plugins_section["ignore"] = ignore_section
+        ignore_section["ignored_nicks"] = sorted(ignored)
 
-    ignore_section["ignored_nicks"] = sorted(ignored)
-
-    try:
-        with config_path.open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(data, handle, sort_keys=False)
-    except Exception:
-        logger.warning("Failed to write ignore list to config file", exc_info=True)
+        try:
+            atomic_write_yaml(config_path, data)
+        except Exception:
+            logger.warning("Failed to write ignore list to config file", exc_info=True)
 
 
 def _update_runtime_config(bot, ignored: Set[str]) -> None:
@@ -228,4 +220,3 @@ def _is_owner(bot, user: str) -> bool:
     nick = user.split("!", 1)[0]
     owner_nicks = getattr(bot, "owner_nicks", set())
     return nick.lower() in {name.lower() for name in owner_nicks}
-

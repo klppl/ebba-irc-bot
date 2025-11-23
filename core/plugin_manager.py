@@ -1,5 +1,8 @@
+import asyncio
+import functools
 import importlib
 import importlib.util
+import inspect
 import logging
 import sys
 from pathlib import Path
@@ -7,6 +10,8 @@ from types import ModuleType
 from typing import Dict, List, Optional, Set, Tuple
 
 import yaml
+
+HANDLER_TIMEOUT_SECS = 10
 
 
 class PluginManager:
@@ -114,6 +119,7 @@ class PluginManager:
         self.load(plugin_name, bot)
 
     def dispatch_message(self, bot, user: str, channel: str, message: str) -> None:
+        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_message", None)
             if not callable(handler):
@@ -121,20 +127,21 @@ class PluginManager:
                     "Plugin '%s' lacks on_message handler; skipping dispatch", name
                 )
                 continue
-            try:
-                handler(bot, user, channel, message)
-            except Exception:
-                self.logger.exception("Plugin '%s' raised during on_message", name)
+            loop.create_task(
+                self._run_handler(handler, name, "on_message", bot, user, channel, message),
+                name=f"plugin-{name}-on_message",
+            )
 
     def dispatch_join(self, bot, user: str, channel: str) -> None:
+        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_join", None)
             if not callable(handler):
                 continue
-            try:
-                handler(bot, user, channel)
-            except Exception:
-                self.logger.exception("Plugin '%s' raised during on_join", name)
+            loop.create_task(
+                self._run_handler(handler, name, "on_join", bot, user, channel),
+                name=f"plugin-{name}-on_join",
+            )
 
     def get_config_path(self) -> Optional[Path]:
         return self._config_path
@@ -348,3 +355,26 @@ class PluginManager:
                     refresher()
                 except Exception:
                     self.logger.exception("Failed to refresh runtime settings after config reload")
+
+    async def _run_handler(
+        self,
+        handler,
+        plugin_name: str,
+        handler_name: str,
+        *args,
+    ) -> None:
+        try:
+            if inspect.iscoroutinefunction(handler):
+                await asyncio.wait_for(handler(*args), timeout=HANDLER_TIMEOUT_SECS)
+            else:
+                loop = asyncio.get_running_loop()
+                func = functools.partial(handler, *args)
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, func), timeout=HANDLER_TIMEOUT_SECS
+                )
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "Plugin '%s' %s timed out after %ss", plugin_name, handler_name, HANDLER_TIMEOUT_SECS
+            )
+        except Exception:
+            self.logger.exception("Plugin '%s' raised during %s", plugin_name, handler_name)

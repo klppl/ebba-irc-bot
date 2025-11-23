@@ -10,7 +10,14 @@ from typing import Any, Dict, Optional, Set
 import yaml
 
 from .plugin_manager import PluginManager
-from .utils import AsyncRateLimiter, IRCMessage, parse_irc_message
+from .utils import (
+    AsyncRateLimiter,
+    IRCMessage,
+    atomic_write_yaml,
+    file_lock,
+    load_yaml_file,
+    parse_irc_message,
+)
 
 
 @dataclass
@@ -61,7 +68,7 @@ class IRCClient:
 
         self.reader: Optional[StreamReader] = None
         self.writer: Optional[StreamWriter] = None
-        self._send_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._send_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
         self._writer_task: Optional[asyncio.Task] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -167,7 +174,11 @@ class IRCClient:
 
     async def send_raw(self, message: str) -> None:
         self.logger.debug("> %s", message)
-        await self._send_queue.put(message)
+        try:
+            await self._send_queue.put(message)
+        except asyncio.QueueFull:
+            self.logger.warning("Send queue full; dropping message: %s", message[:200])
+            return
 
     async def privmsg(self, target: str, text: str) -> None:
         await self._rate_limiter.acquire()
@@ -330,18 +341,6 @@ class IRCClient:
         if not config_path:
             return
 
-        try:
-            if config_path.exists():
-                with config_path.open("r", encoding="utf-8") as handle:
-                    data = yaml.safe_load(handle) or {}
-            else:
-                data = {}
-        except Exception:
-            self.logger.warning(
-                "Failed to read config file when updating channels", exc_info=True
-            )
-            return
-
         normalized_channels = []
         seen_lower = set()
         for channel in self.channels:
@@ -359,26 +358,29 @@ class IRCClient:
         self.channels = list(normalized_channels)
         self.config["channels"] = list(normalized_channels)
 
-        existing_section = data.get("channels")
-        if isinstance(existing_section, list):
-            existing_channels = [
-                str(item).strip() for item in existing_section if isinstance(item, str)
-            ]
-        else:
-            existing_channels = []
+        lock_path = config_path.with_suffix(config_path.suffix + ".lock")
+        with file_lock(lock_path):
+            data = load_yaml_file(config_path)
 
-        if existing_channels == normalized_channels:
-            return
+            existing_section = data.get("channels")
+            if isinstance(existing_section, list):
+                existing_channels = [
+                    str(item).strip() for item in existing_section if isinstance(item, str)
+                ]
+            else:
+                existing_channels = []
 
-        data["channels"] = normalized_channels
+            if existing_channels == normalized_channels:
+                return
 
-        try:
-            with config_path.open("w", encoding="utf-8") as handle:
-                yaml.safe_dump(data, handle, sort_keys=False)
-        except Exception:
-            self.logger.warning(
-                "Failed to write updated channels to config", exc_info=True
-            )
+            data["channels"] = normalized_channels
+
+            try:
+                atomic_write_yaml(config_path, data)
+            except Exception:
+                self.logger.warning(
+                    "Failed to write updated channels to config", exc_info=True
+                )
 
     def _load_owner_records(self, config: Dict[str, Any]) -> Dict[str, OwnerRecord]:
         raw_entries = config.get("owner_nicks", []) or []
@@ -454,27 +456,17 @@ class IRCClient:
         self.config["owner_nicks"] = serialized
         self.owner_nicks = {record.nick for record in self._owner_records.values()}
 
-        try:
-            if config_path.exists():
-                with config_path.open("r", encoding="utf-8") as handle:
-                    data = yaml.safe_load(handle) or {}
-            else:
-                data = {}
-        except Exception:
-            self.logger.warning(
-                "Failed to read config file when updating owner records", exc_info=True
-            )
-            return
+        lock_path = config_path.with_suffix(config_path.suffix + ".lock")
+        with file_lock(lock_path):
+            data = load_yaml_file(config_path)
+            data["owner_nicks"] = serialized
 
-        data["owner_nicks"] = serialized
-
-        try:
-            with config_path.open("w", encoding="utf-8") as handle:
-                yaml.safe_dump(data, handle, sort_keys=False)
-        except Exception:
-            self.logger.warning(
-                "Failed to write updated owner records to config", exc_info=True
-            )
+            try:
+                atomic_write_yaml(config_path, data)
+            except Exception:
+                self.logger.warning(
+                    "Failed to write updated owner records to config", exc_info=True
+                )
 
     def _extract_owner_identity(self, prefix: str) -> tuple[Optional[str], Optional[str]]:
         if "!" not in prefix:

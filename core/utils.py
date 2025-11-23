@@ -1,9 +1,14 @@
 import asyncio
+import contextlib
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Optional
+from pathlib import Path
+from typing import Any, Deque, Dict, Optional
+
+import yaml
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -85,3 +90,42 @@ def validate_required_keys(config: Dict[str, object], required: Dict[str, type])
         if not isinstance(config[key], expected_type):
             raise TypeError(f"Config key '{key}' must be of type {expected_type.__name__}")
 
+
+def load_yaml_file(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return {}
+    return {}
+
+
+@contextlib.contextmanager
+def file_lock(lock_path: Path):
+    lock_file = lock_path.open("w")
+    try:
+        try:
+            import fcntl
+        except ImportError:
+            fcntl = None
+        if fcntl:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if "fcntl" in locals() and fcntl:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
+
+
+def atomic_write_yaml(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False)
+    os.replace(tmp_path, path)
