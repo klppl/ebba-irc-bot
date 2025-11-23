@@ -64,6 +64,11 @@ class IRCClient:
         rate_count = int(config.get("privmsg_rate_count", 4))
         rate_window = float(config.get("privmsg_rate_window_secs", 2.0))
         self._rate_limiter = AsyncRateLimiter(rate_count, rate_window)
+        per_target_count = int(config.get("per_target_rate_count", 2))
+        per_target_window = float(config.get("per_target_rate_window_secs", 2.0))
+        self._per_target_count = per_target_count
+        self._per_target_window = per_target_window
+        self._target_rate_limiters: Dict[str, AsyncRateLimiter] = {}
         self.ignored_nicks: Set[str] = set()
 
         self.reader: Optional[StreamReader] = None
@@ -73,6 +78,8 @@ class IRCClient:
         self._reader_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._signals_registered = False
+        self._last_connect_time: Optional[float] = None
+        self._last_disconnect_time: Optional[float] = None
 
     async def start(self) -> None:
         """Attempt to connect and stay connected with exponential backoff."""
@@ -102,6 +109,7 @@ class IRCClient:
         self.reader, self.writer = await asyncio.open_connection(
             self.server, self.port, ssl=ssl_context
         )
+        self._last_connect_time = asyncio.get_running_loop().time()
         await self._register()
 
         loop = asyncio.get_running_loop()
@@ -146,6 +154,7 @@ class IRCClient:
         self._writer_task = None
         self._reader_task = None
         self._send_queue = asyncio.Queue()
+        self._last_disconnect_time = asyncio.get_running_loop().time()
 
     async def _writer_loop(self) -> None:
         assert self.writer is not None
@@ -181,6 +190,7 @@ class IRCClient:
             return
 
     async def privmsg(self, target: str, text: str) -> None:
+        await self._acquire_target_rate(target)
         await self._rate_limiter.acquire()
         await self.send_raw(f"PRIVMSG {target} :{text}")
 
@@ -239,10 +249,58 @@ class IRCClient:
         self.request_timeout = int(self.config.get("request_timeout_secs", self.request_timeout))
         self.max_backoff = int(self.config.get("max_reconnect_delay_secs", self.max_backoff))
         self.join_delay_secs = float(self.config.get("join_delay_secs", self.join_delay_secs))
+        self._per_target_count = int(self.config.get("per_target_rate_count", self._per_target_count))
+        self._per_target_window = float(
+            self.config.get("per_target_rate_window_secs", self._per_target_window)
+        )
 
         channels = self.config.get("channels")
         if isinstance(channels, list):
             self.channels = list(channels)
+
+        # Reset per-target limiters with updated settings
+        self._target_rate_limiters.clear()
+
+    async def _handle_status(self, reply_target: str) -> None:
+        now = asyncio.get_running_loop().time()
+        def _fmt(ts: Optional[float]) -> str:
+            return f"{int(now - ts)}s ago" if ts is not None else "n/a"
+
+        queue_size = getattr(self._send_queue, "qsize", lambda: 0)()
+        enabled, disabled = self.plugin_manager.list_plugin_status()
+        parts = [
+            f"channels={len(self.channels)}",
+            f"connected={_fmt(self._last_connect_time)}",
+            f"disconnected={_fmt(self._last_disconnect_time)}",
+            f"queue={queue_size}",
+            f"plugins=+{len(enabled)}/-{len(disabled)}",
+        ]
+        await self.privmsg(reply_target, "Status: " + " | ".join(parts))
+
+    async def _acquire_target_rate(self, target: str) -> None:
+        limiter = self._target_rate_limiters.get(target.lower())
+        if limiter is None:
+            limiter = AsyncRateLimiter(self._per_target_count, self._per_target_window)
+            self._target_rate_limiters[target.lower()] = limiter
+        await limiter.acquire()
+
+    async def _handle_help(self, reply_target: str, args: List[str]) -> None:
+        specs = self.plugin_manager.list_commands()
+        if not specs:
+            await self.privmsg(reply_target, "No plugin commands registered.")
+            return
+
+        # Basic summary help; could be expanded to detailed command help with args[0]
+        parts = []
+        for spec in specs:
+            alias_part = ""
+            aliases = sorted(a for a in spec.aliases if a != spec.name)
+            if aliases:
+                alias_part = f" (aliases: {', '.join(aliases)})"
+            help_text = spec.help_text or "no description"
+            parts.append(f"{self.prefix}{spec.name}{alias_part} - {help_text}")
+
+        await self.privmsg(reply_target, "Commands: " + " | ".join(parts))
 
     async def _handle_privmsg(self, message: IRCMessage) -> None:
         if message.prefix is None or message.trailing is None:
@@ -608,3 +666,16 @@ class IRCClient:
                 await self.part(target_channel, reason)
                 self._forget_channel(target_channel)
                 await self.privmsg(reply_target, f"Parting {target_channel}")
+        if command in {"health", "status"}:
+            await self._handle_status(reply_target)
+            return
+
+        if command == "help":
+            await self._handle_help(reply_target, args)
+            return
+
+        handled = self.plugin_manager.dispatch_registered_command(
+            self, nick, channel, command, args, is_private
+        )
+        if handled:
+            return

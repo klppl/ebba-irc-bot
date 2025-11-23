@@ -5,13 +5,23 @@ import importlib.util
 import inspect
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import yaml
 
 HANDLER_TIMEOUT_SECS = 10
+
+
+@dataclass
+class CommandSpec:
+    plugin: str
+    name: str
+    aliases: Set[str]
+    help_text: str
+    handler: Callable
 
 
 class PluginManager:
@@ -30,6 +40,8 @@ class PluginManager:
         self._known_plugins: Set[str] = set()
         self._config_path = config_path
         self._apply_config_disabled_preferences()
+        self._commands: Dict[str, CommandSpec] = {}
+        self._plugin_commands: Dict[str, Set[str]] = {}
 
     def list_plugins(self) -> List[str]:
         return sorted(self._plugins.keys())
@@ -100,6 +112,7 @@ class PluginManager:
         if module is None:
             raise RuntimeError(f"Plugin '{plugin_name}' is not loaded")
 
+        self._unregister_commands_for_plugin(plugin_name)
         on_unload = getattr(module, "on_unload", None)
         if callable(on_unload):
             try:
@@ -142,6 +155,68 @@ class PluginManager:
                 self._run_handler(handler, name, "on_join", bot, user, channel),
                 name=f"plugin-{name}-on_join",
             )
+
+    def register_command(
+        self,
+        plugin_name: str,
+        command: str,
+        handler: Callable,
+        *,
+        aliases: Optional[List[str]] = None,
+        help_text: str = "",
+    ) -> None:
+        if not command:
+            raise ValueError("Command name must be non-empty")
+        names = {command.lower()}
+        if aliases:
+            names.update(alias.lower() for alias in aliases if alias)
+
+        # Ensure no conflicts
+        for name in names:
+            if name in self._commands:
+                raise ValueError(f"Command '{name}' already registered by {self._commands[name].plugin}")
+
+        spec = CommandSpec(
+            plugin=plugin_name,
+            name=command.lower(),
+            aliases=names,
+            help_text=help_text,
+            handler=handler,
+        )
+        for name in names:
+            self._commands[name] = spec
+        self._plugin_commands.setdefault(plugin_name, set()).update(names)
+
+    def list_commands(self) -> List[CommandSpec]:
+        seen = set()
+        specs: List[CommandSpec] = []
+        for spec in self._commands.values():
+            if spec.name in seen:
+                continue
+            seen.add(spec.name)
+            specs.append(spec)
+        return sorted(specs, key=lambda s: s.name)
+
+    def dispatch_registered_command(
+        self,
+        bot,
+        user: str,
+        channel: str,
+        command: str,
+        args: List[str],
+        is_private: bool,
+    ) -> bool:
+        spec = self._commands.get(command.lower())
+        if spec is None:
+            return False
+        try:
+            maybe_coro = spec.handler(bot, user, channel, args, is_private)
+            if inspect.iscoroutine(maybe_coro):
+                loop = asyncio.get_running_loop()
+                loop.create_task(maybe_coro, name=f"cmd-{spec.plugin}-{spec.name}")
+        except Exception:
+            self.logger.exception("Command '%s' in plugin '%s' failed", command, spec.plugin)
+        return True
 
     def get_config_path(self) -> Optional[Path]:
         return self._config_path
@@ -378,3 +453,8 @@ class PluginManager:
             )
         except Exception:
             self.logger.exception("Plugin '%s' raised during %s", plugin_name, handler_name)
+
+    def _unregister_commands_for_plugin(self, plugin_name: str) -> None:
+        names = self._plugin_commands.pop(plugin_name, set())
+        for name in names:
+            self._commands.pop(name, None)

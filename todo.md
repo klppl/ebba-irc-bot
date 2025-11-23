@@ -12,9 +12,9 @@
 - [ ] 11) Expose tuning knobs in config (`config_sample.yaml`, `core/irc_client.py`): surface `max_backoff`, join delay, rate-limiter settings so operators can tune without code changes.
 - [ ] 12) Plugin test harness & CI (repo root): add fake bot + sample message tests and wire lint/format (ruff/black) in CI to catch regressions early.
 - [ ] 13) HTTP plugin standards (`scripts/*`): standardize timeouts, user agents, and provide a mock/dry-run mode to avoid real API calls during CI.
-- [ ] 14) Command router and help (`core/plugin_manager.py`, plugins): add a registration-based command router with aliases/help text so plugins don’t hand-roll parsing and a `.help` command can list usage.
+- [x] 14) Command router and help (`core/plugin_manager.py`, plugins): add a registration-based command router with aliases/help text so plugins don’t hand-roll parsing and a `.help` command can list usage.
 - [ ] 15) Persistent plugin state helper (`core/utils.py` or new module): provide a small per-plugin state storage API (JSON/YAML, cached + atomic writes) so plugins reuse safe persistence instead of custom file handling.
 - [ ] 16) Per-channel plugin toggles (`core/plugin_manager.py`, `config_sample.yaml`): allow enabling/disabling plugins per channel and persist the setting to reduce noise in specific rooms without unloading globally.
-- [ ] 17) Per-target rate limits (`core/irc_client.py`): add per-channel/user rate caps alongside the global limiter to prevent one room from being spammed while keeping other traffic flowing.
+- [x] 17) Per-target rate limits (`core/irc_client.py`): add per-channel/user rate caps alongside the global limiter to prevent one room from being spammed while keeping other traffic flowing.
 - [ ] 18) Admin audit trail (`core/irc_client.py`): log or send to a configured channel all admin actions (`.auth`, `.say`, `.join/.part`, plugin load/unload) for transparency and incident review.
-- [ ] 19) Health/status command (`core/irc_client.py`): expose a `.health`/`.status` command showing connected channels, last reconnect time, queue depth, and plugin load status for operators.
+- [x] 19) Health/status command (`core/irc_client.py`): expose a `.health`/`.status` command showing connected channels, last reconnect time, queue depth, and plugin load status for operators.
