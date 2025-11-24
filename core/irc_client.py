@@ -5,7 +5,7 @@ import signal
 import ssl
 from asyncio import StreamReader, StreamWriter
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import yaml
 
@@ -28,7 +28,23 @@ class OwnerRecord:
 
     def has_host(self, ident_host: str) -> bool:
         candidate = ident_host.lower()
-        return any(existing.lower() == candidate for existing in self.hosts)
+        # Direct match
+        if any(existing.lower() == candidate for existing in self.hosts):
+            return True
+        # Try matching with/without ~ prefix (some IRC servers use ~ for no ident)
+        if "@" in candidate:
+            ident_part, host_part = candidate.split("@", 1)
+            # Try without ~ prefix
+            if ident_part.startswith("~"):
+                alt_candidate = f"{ident_part[1:]}@{host_part}"
+                if any(existing.lower() == alt_candidate for existing in self.hosts):
+                    return True
+            # Try with ~ prefix
+            else:
+                alt_candidate = f"~{ident_part}@{host_part}"
+                if any(existing.lower() == alt_candidate for existing in self.hosts):
+                    return True
+        return False
 
     def add_host(self, ident_host: str) -> bool:
         ident_host = ident_host.strip()
@@ -352,6 +368,8 @@ class IRCClient:
         if nick.lower() == self.nickname.lower():
             self._forget_channel(channel)
 
+        self.plugin_manager.dispatch_part(self, prefix, channel)
+
     def _remember_channel(self, channel: str) -> None:
         channel = channel.strip()
         if not channel:
@@ -560,16 +578,27 @@ class IRCClient:
             return False
         nick, ident_host = self._extract_owner_identity(prefix)
         if not nick or not ident_host:
+            self.logger.debug("Owner access check failed: missing nick or ident_host for prefix %s", prefix)
             return False
 
         record = self._owner_records.get(nick.lower())
         if record is None:
+            self.logger.debug("Owner access check failed: no record for nick %s", nick)
             return False
 
         if not record.hosts:
+            self.logger.debug("Owner access check failed: no hosts configured for nick %s", nick)
             return False
 
-        return record.has_host(ident_host)
+        has_access = record.has_host(ident_host)
+        if not has_access:
+            self.logger.debug(
+                "Owner access check failed: ident_host %s not in hosts %s for nick %s",
+                ident_host,
+                list(record.hosts),
+                nick,
+            )
+        return has_access
 
     async def _handle_builtin_commands(
         self, nick: str, prefix: Optional[str], channel: str, text: str, is_private: bool
@@ -599,9 +628,34 @@ class IRCClient:
                 await self.privmsg(nick, "Authentication failed (missing prefix).")
                 return
             if self._authenticate_owner(prefix, password):
-                await self.privmsg(nick, "Authentication successful.")
+                nick_check, ident_host_check = self._extract_owner_identity(prefix)
+                await self.privmsg(
+                    nick,
+                    f"Authentication successful. Your ident_host: {ident_host_check}",
+                )
             else:
                 await self.privmsg(nick, "Authentication failed.")
+            return
+
+        if command == "whoami":
+            if not prefix:
+                await self.privmsg(reply_target, "Unable to determine your identity.")
+                return
+            nick_check, ident_host_check = self._extract_owner_identity(prefix)
+            record = self._owner_records.get(nick_check.lower() if nick_check else "")
+            if record:
+                hosts_list = ", ".join(sorted(record.hosts)) if record.hosts else "none"
+                has_access = self._has_owner_access(prefix)
+                await self.privmsg(
+                    reply_target,
+                    f"Nick: {nick_check} | Ident_host: {ident_host_check} | "
+                    f"Stored hosts: {hosts_list} | Has access: {has_access}",
+                )
+            else:
+                await self.privmsg(
+                    reply_target,
+                    f"Nick: {nick_check} | Ident_host: {ident_host_check} | No owner record",
+                )
             return
 
         if command == "plugins":
@@ -674,8 +728,10 @@ class IRCClient:
             await self._handle_help(reply_target, args)
             return
 
-        handled = self.plugin_manager.dispatch_registered_command(
-            self, nick, channel, command, args, is_private
-        )
-        if handled:
-            return
+        # Dispatch to registered plugin commands (need full prefix for owner checks)
+        if prefix:
+            handled = self.plugin_manager.dispatch_registered_command(
+                self, prefix, channel, command, args, is_private
+            )
+            if handled:
+                return

@@ -156,6 +156,17 @@ class PluginManager:
                 name=f"plugin-{name}-on_join",
             )
 
+    def dispatch_part(self, bot, user: str, channel: str) -> None:
+        loop = asyncio.get_running_loop()
+        for name, module in list(self._plugins.items()):
+            handler = getattr(module, "on_part", None)
+            if not callable(handler):
+                continue
+            loop.create_task(
+                self._run_handler(handler, name, "on_part", bot, user, channel),
+                name=f"plugin-{name}-on_part",
+            )
+
     def register_command(
         self,
         plugin_name: str,
