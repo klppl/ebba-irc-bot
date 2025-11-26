@@ -453,11 +453,14 @@ class PluginManager:
             if inspect.iscoroutinefunction(handler):
                 await asyncio.wait_for(handler(*args), timeout=HANDLER_TIMEOUT_SECS)
             else:
-                loop = asyncio.get_running_loop()
-                func = functools.partial(handler, *args)
-                await asyncio.wait_for(
-                    loop.run_in_executor(None, func), timeout=HANDLER_TIMEOUT_SECS
-                )
+                # Sync handlers may use asyncio.get_running_loop(), so run them directly
+                # in async context rather than executor to preserve event loop access.
+                # Message handlers are typically fast, so blocking briefly is acceptable.
+                result = handler(*args)
+                # If handler returns a coroutine (e.g., from get_running_loop().create_task),
+                # we need to await it
+                if inspect.iscoroutine(result):
+                    await asyncio.wait_for(result, timeout=HANDLER_TIMEOUT_SECS)
         except asyncio.TimeoutError:
             self.logger.warning(
                 "Plugin '%s' %s timed out after %ss", plugin_name, handler_name, HANDLER_TIMEOUT_SECS
