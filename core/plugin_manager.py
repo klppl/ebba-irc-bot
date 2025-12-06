@@ -42,6 +42,9 @@ class PluginManager:
         self._apply_config_disabled_preferences()
         self._commands: Dict[str, CommandSpec] = {}
         self._plugin_commands: Dict[str, Set[str]] = {}
+        self._plugin_tasks: Dict[str, Set[asyncio.Task]] = {}
+        self._max_concurrent_tasks = 100
+        self._task_semaphore = asyncio.Semaphore(self._max_concurrent_tasks)
 
     def list_plugins(self) -> List[str]:
         return sorted(self._plugins.keys())
@@ -124,6 +127,13 @@ class PluginManager:
         sys.modules.pop(module_name, None)
         self._disabled_plugins.add(plugin_name)
         self._set_plugin_enabled_flag(bot, plugin_name, False)
+        
+        # Cancel active tasks for this plugin
+        tasks = self._plugin_tasks.pop(plugin_name, set())
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        
         self.logger.info("Unloaded plugin '%s'", plugin_name)
 
     def reload(self, plugin_name: str, bot) -> None:
@@ -140,9 +150,10 @@ class PluginManager:
                     "Plugin '%s' lacks on_message handler; skipping dispatch", name
                 )
                 continue
-            loop.create_task(
+            self._spawn_task(
+                name,
                 self._run_handler(handler, name, "on_message", bot, user, channel, message),
-                name=f"plugin-{name}-on_message",
+                f"plugin-{name}-on_message",
             )
 
     def dispatch_join(self, bot, user: str, channel: str) -> None:
@@ -151,9 +162,10 @@ class PluginManager:
             handler = getattr(module, "on_join", None)
             if not callable(handler):
                 continue
-            loop.create_task(
+            self._spawn_task(
+                name,
                 self._run_handler(handler, name, "on_join", bot, user, channel),
-                name=f"plugin-{name}-on_join",
+                f"plugin-{name}-on_join",
             )
 
     def dispatch_part(self, bot, user: str, channel: str) -> None:
@@ -162,9 +174,10 @@ class PluginManager:
             handler = getattr(module, "on_part", None)
             if not callable(handler):
                 continue
-            loop.create_task(
+            self._spawn_task(
+                name,
                 self._run_handler(handler, name, "on_part", bot, user, channel),
-                name=f"plugin-{name}-on_part",
+                f"plugin-{name}-on_part",
             )
 
     def register_command(
@@ -223,8 +236,11 @@ class PluginManager:
         try:
             maybe_coro = spec.handler(bot, user, channel, args, is_private)
             if inspect.iscoroutine(maybe_coro):
-                loop = asyncio.get_running_loop()
-                loop.create_task(maybe_coro, name=f"cmd-{spec.plugin}-{spec.name}")
+                self._spawn_task(
+                    spec.plugin,
+                    maybe_coro,
+                    f"cmd-{spec.plugin}-{spec.name}"
+                )
         except Exception:
             self.logger.exception("Command '%s' in plugin '%s' failed", command, spec.plugin)
         return True
@@ -449,26 +465,34 @@ class PluginManager:
         handler_name: str,
         *args,
     ) -> None:
-        try:
-            if inspect.iscoroutinefunction(handler):
-                await asyncio.wait_for(handler(*args), timeout=HANDLER_TIMEOUT_SECS)
-            else:
-                # Sync handlers may use asyncio.get_running_loop(), so run them directly
-                # in async context rather than executor to preserve event loop access.
-                # Message handlers are typically fast, so blocking briefly is acceptable.
-                result = handler(*args)
-                # If handler returns a coroutine (e.g., from get_running_loop().create_task),
-                # we need to await it
-                if inspect.iscoroutine(result):
-                    await asyncio.wait_for(result, timeout=HANDLER_TIMEOUT_SECS)
-        except asyncio.TimeoutError:
-            self.logger.warning(
-                "Plugin '%s' %s timed out after %ss", plugin_name, handler_name, HANDLER_TIMEOUT_SECS
-            )
-        except Exception:
-            self.logger.exception("Plugin '%s' raised during %s", plugin_name, handler_name)
+        async with self._task_semaphore:
+            try:
+                if inspect.iscoroutinefunction(handler):
+                    await asyncio.wait_for(handler(*args), timeout=HANDLER_TIMEOUT_SECS)
+                else:
+                    # Sync handlers
+                    result = handler(*args)
+                    if inspect.iscoroutine(result):
+                        await asyncio.wait_for(result, timeout=HANDLER_TIMEOUT_SECS)
+            except asyncio.TimeoutError:
+                self.logger.warning(
+                    "Plugin '%s' %s timed out after %ss", plugin_name, handler_name, HANDLER_TIMEOUT_SECS
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.exception("Plugin '%s' raised during %s", plugin_name, handler_name)
+
+    def _spawn_task(self, plugin_name: str, coro, task_name: str) -> None:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro, name=task_name)
+        
+        tasks = self._plugin_tasks.setdefault(plugin_name, set())
+        tasks.add(task)
+        task.add_done_callback(lambda t: tasks.discard(t))
 
     def _unregister_commands_for_plugin(self, plugin_name: str) -> None:
         names = self._plugin_commands.pop(plugin_name, set())
         for name in names:
             self._commands.pop(name, None)
+

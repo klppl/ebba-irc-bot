@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Deque, Dict, Optional
 
+from filelock import FileLock
+
 import yaml
 
 
@@ -106,21 +108,12 @@ def load_yaml_file(path: Path) -> Dict[str, Any]:
 
 @contextlib.contextmanager
 def file_lock(lock_path: Path):
-    lock_file = lock_path.open("w")
-    try:
-        try:
-            import fcntl
-        except ImportError:
-            fcntl = None
-        if fcntl:
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
+    """Cross-platform file locking using filelock."""
+    # Ensure directory exists
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(lock_path))
+    with lock:
         yield
-    finally:
-        try:
-            if "fcntl" in locals() and fcntl:
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
-        finally:
-            lock_file.close()
 
 
 def atomic_write_yaml(path: Path, data: Dict[str, Any]) -> None:

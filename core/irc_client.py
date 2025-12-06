@@ -123,7 +123,10 @@ class IRCClient:
         ssl_context = ssl.create_default_context() if self.use_tls else None
         self.logger.info("Connecting to %s:%s (TLS=%s)", self.server, self.port, self.use_tls)
         self.reader, self.writer = await asyncio.open_connection(
-            self.server, self.port, ssl=ssl_context
+            self.server,
+            self.port,
+            ssl=ssl_context,
+            server_hostname=self.server if self.use_tls else None,
         )
         self._last_connect_time = asyncio.get_running_loop().time()
         await self._register()
