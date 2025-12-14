@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+	<!-- https://nextglass.slack.com/archives/C04N1J9FBHU/p1759426560133409?thread_ts=1755544269.186859&cid=C04N1J9FBHU -->
+	<!-- From their docs: IMPORTANT: This tag must be the first '<script>' tag on the page. -->
+	<script src="https://app.termly.io/resource-blocker/d6db7a3c-38b6-45a7-9433-e965e78f4809"></script>
+
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+			<title>Untappd Beer Search | Untappd</title>
+		
+	<meta property="og:site_name" content="Untappd" />
+
+	<!-- meta block -->
+			<meta name="description" content="Looking for something on Untappd? Search to find any beer, brewery or venue on Untappd." />
+		<meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width" />
+	<meta name="referrer" content="origin-when-crossorigin">
+	<meta name="author" content="The Untappd Team" />
+	<meta name="Copyright" content="Copyright Untappd 2025. All Rights Reserved." />
+	<meta name="DC.title" content="Untappd" />
+			<meta name="DC.subject" content="Looking for something on Untappd? Search to find any beer, brewery or venue on Untappd." />
+			<meta name="DC.creator" content="The Untappd Team" />
+
+	<meta name="google-site-verification" content="EnR7QavTgiLCzZCCOv_OARCHsHhFwkwnJdG0Sti9Amg" />
+	<meta name="bitly-verification" content="b3080898518a"/>
+
+	<!-- favicon -->
+	<link rel="apple-touch-icon" sizes="144x144" href="https://untappd.com/assets/apple-touch-icon.png">
+	<link rel="icon" type="image/png" href="https://untappd.com/assets/favicon-32x32-v2.png" sizes="32x32">
+	<link rel="icon" type="image/png" href="https://untappd.com/assets/favicon-16x16-v2.png" sizes="16x16">
+	<link rel="manifest" href="https://untappd.com/assets/manifest.json">
+	<link rel="mask-icon" href="https://untappd.com/assets/safari-pinned-tab.svg" color="#5bbad5">
+
+	<link rel="stylesheet"
+    	href="https://untappd.com/assets/css/tailwind.css?v=2.8.33">
+	</link>
+
+	<link id="canonical" rel="canonical" href="https://untappd.com/search">		<link rel="stylesheet" href="https://untappd.com/assets/css/master.min.css?v=4.5.33" />
+		<link rel="stylesheet" href="https://untappd.com/assets/v3/css/style.css?v=4.5.33" />
+		<link rel="stylesheet" href="https://untappd.com/assets/design-system/css/styles.css?v=4.5.33" />
+		<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+		<link href="https://fonts.googleapis.com/css?family=Material+Icons|Material+Icons+Outlined|Material+Icons+Two+Tone|Material+Icons+Round|Material+Icons+Sharp" rel="stylesheet">
+			<script src="https://untappd.com/assets/v3/js/common/min/site_common_min.js?v=2.8.33"></script>
+				<link rel="stylesheet" href="https://untappd.com/assets/css/facybox.min.css?v=4.5.33" />
+			
+		<link rel="stylesheet" href="https://untappd.com/assets/css/jquery.notifyBar.min.css?v=4.5.33" />
+		<link rel="stylesheet" href="https://untappd.com/assets/css/tipsy.min.css?v=4.5.33" type="text/css" media="screen" title="no title" charset="utf-8">
+		
+		<script type="text/javascript" language="Javascript">
+			$(document).ready(function(){
+				$(".tip").tipsy({fade: true});
+				$('.badge_hint').tipsy({gravity: 's', fade: true});
+				$('.disabled').tipsy({gravity: 'n', fade: true});
+
+				refreshTime(".timezoner", "D MMM YY", true);
+
+				$(".tab").click(function(){
+					$(".tab-area li").removeClass('active');
+					$(this).parent().addClass('active');
+					$(".list").hide();
+					$($(this).attr("href")).show();
+					return false;
+				});
+			});
+
+			</script>
+			<!-- For IE -->
+	<script type="text/javascript" language="Javascript">
+	onChangeInterval = "";
+	if(!(window.console && console.log)) {
+	  console = {
+	    log: function(){},
+	    debug: function(){},
+	    info: function(){},
+	    warn: function(){},
+	    error: function(){}
+	  };
+	}
+	</script>
+	
+	<!-- algoliasearch -->
+	<script type="text/javascript" src="https://untappd.com/assets/libs/js/algoliasearch.min.js?v2.8.33"></script>
+	<script type="text/javascript" src="https://untappd.com/assets/libs/js/autocomplete.min.js?v2.8.33"></script>
+	<script type="text/javascript" src="https://untappd.com/assets/libs/js/lodash.min.js?v2.8.33"></script>
+	<script type="text/javascript" src="https://untappd.com/assets/js/global/autosearch_tracking.min.js?v2.8.33"></script>
+
+	<script>
+        !function(e,a,t,n,s,i,c){e.AlgoliaAnalyticsObject=s,e.aa=e.aa||function(){(e.aa.queue=e.aa.queue||[]).push(arguments)},i=a.createElement(t),c=a.getElementsByTagName(t)[0],i.async=1,i.src="https://cdn.jsdelivr.net/npm/search-insights@0.0.14",c.parentNode.insertBefore(i,c)}(window,document,"script",0,"aa");
+
+        // Initialize library
+        aa('init', {
+        applicationID: '9WBO4RQ3HO',
+        apiKey: '1d347324d67ec472bb7132c66aead485',
+        })
+    </script>
+
+
+	<!-- Google Tag Manager -->
+	<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+	new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+	j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+	'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+	})(window,document,'script','dataLayer','GTM-N4DVXTR');</script>
+	<!-- End Google Tag Manager -->
+
+	<script src="https://untappd.com/assets/v3/js/venue-impression-tracker.js"></script>
+
+	<script type="text/javascript">
+		var clevertap = {event:[], profile:[], account:[], onUserLogin:[], region: 'us1', notifications:[], privacy:[]};
+        clevertap.account.push({"id": "865-K5R-W96Z"});
+        clevertap.privacy.push({optOut: false}); //set the flag to true, if the user of the device opts out of sharing their data
+        clevertap.privacy.push({useIP: true}); //set the flag to true, if the user agrees to share their IP data
+        (function () {
+                var wzrk = document.createElement('script');
+                wzrk.type = 'text/javascript';
+                wzrk.async = true;
+                wzrk.src = ('https:' == document.location.protocol ? 'https://d2r1yp2w7bby2u.cloudfront.net' : 'http://static.clevertap.com') + '/js/clevertap.min.js';
+                var s = document.getElementsByTagName('script')[0];
+                s.parentNode.insertBefore(wzrk, s);
+        })();
+	</script>
+
+    <!-- Freestar Ads -->
+<!-- Below is a recommended list of pre-connections, which allow the network to establish each connection quicker, speeding up response times and improving ad performance. -->
+<link rel="preconnect" href="https://a.pub.network/" crossorigin />
+<link rel="preconnect" href="https://b.pub.network/" crossorigin />
+<link rel="preconnect" href="https://c.pub.network/" crossorigin />
+<link rel="preconnect" href="https://d.pub.network/" crossorigin />
+<link rel="preconnect" href="https://c.amazon-adsystem.com" crossorigin />
+<link rel="preconnect" href="https://s.amazon-adsystem.com" crossorigin />
+<link rel="preconnect" href="https://btloader.com/" crossorigin />
+<link rel="preconnect" href="https://api.btloader.com/" crossorigin />
+<link rel="preconnect" href="https://cdn.confiant-integrations.net" crossorigin />
+<!-- Below is a link to a CSS file that accounts for Cumulative Layout Shift, a new Core Web Vitals subset that Google uses to help rank your site in search -->
+<!-- The file is intended to eliminate the layout shifts that are seen when ads load into the page. If you don't want to use this, simply remove this file -->
+<!-- To find out more about CLS, visit https://web.dev/vitals/ -->
+<link rel="stylesheet" href="https://a.pub.network/untappd-com/cls.css">
+<script data-cfasync="false" type="text/javascript">
+    console.log("freestar_init");
+
+    var env = 'PROD';
+
+    var freestar = freestar || {};
+    freestar.queue = freestar.queue || [];
+    freestar.queue.push(function () {
+        if (env !== 'PROD') {   
+            googletag.pubads().set('page_url', 'https://untappd.com/'); // Makes ads fill in non-prod environments
+        }
+    });
+    freestar.config = freestar.config || {};
+    freestar.config.enabled_slots = [];
+    freestar.initCallback = function () { (freestar.config.enabled_slots.length === 0) ? freestar.initCallbackCalled = false : freestar.newAdSlots(freestar.config.enabled_slots) }
+</script>
+<script src="https://a.pub.network/untappd-com/pubfig.min.js" data-cfasync="false" async></script>
+<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js?network-code=15184186" ></script>
+<!-- End Freestar Ads -->
+    <!-- Freestar Ad Sticky Styling: https://resources.freestar.com/docs/sticky-ads-1 -->
+    <style>
+    div.sticky {
+        position: -webkit-sticky; /* Safari */
+        position: sticky;
+        top: 84px; /* Navbar height */
+    }
+    </style>
+
+</head>
+<style type="text/css">
+	.hidden {display: none;}
+	.main {
+       margin-top: 0px !important;
+   }
+</style>
+<script src="https://untappd.com/assets/libs/js/feather-icons@4.29.2.min.js"></script>
+<body onunload="">
+<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-N4DVXTR" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
+
+
+<script type="text/javascript">
+    $(document).ready(function() {
+        $('a[data-href=":logout"]').on('click', function(event) {
+            clevertap.event.push("logout");
+        });
+        $('a[data-href=":external/help"]').on('click', function(event) {
+            clevertap.event.push("pageview_help");
+        });
+        $('a[data-href=":store"]').on('click', function(event) {
+            clevertap.event.push("pageview_store");
+        });
+        $('a[href="/admin"]').on('click', function(event) {
+          clevertap.event.push("pageview_admin");
+        });
+
+            });
+</script>
+<div id="mobile_nav_user">
+
+   </div>
+
+<div id="mobile_nav_site">
+  <form class="search_box" method="get" action="/search">
+    <input type="text" class="track-focus search-input-desktop" autocomplete="off" data-track="desktop_search" placeholder="Find a beer, brewery or bar..." name="q" aria-label="Find a beer, brewery or bar search" />
+    <input type="submit" value="Submit the form!" style="position: absolute; top: 0; left: 0; z-index: 0; width: 1px; height: 1px; visibility: hidden;" />
+    <div class="autocomplete">
+    </div>
+  </form>
+  <ul>
+    <li><a class="track-click" data-track="mobile_menu" data-href=":blog" href="/blog">Blog</a></li>
+    <li><a class="track-click" data-track="mobile_menu" data-href=":beer/top_rated" href="/beer/top_rated">Top Rated</a></li>
+    <li><a class="track-click" data-track="mobile_menu" data-href=":supporter" href="/supporter">Insiders</a></li>
+    <li><a class="track-click" data-track="mobile_menu" data-href=":external/help" target="_blank" href="http://help.untappd.com">Help</a></li>
+    <li><a class="track-click" data-track="mobile_menu" data-href=":shop" target="_blank" href="https://untappd.com/shop">Shop</a></li>
+          <li><a class="track-click" data-track="mobile_menu" data-href=":sidebar/login" href="/login">Login</a></li>
+      <li><a class="track-click" data-track="mobile_menu" data-href=":sidebar/create" href="/create?source=mobilemenu">Sign Up</a></li>
+        </ul>
+</div>
+<header>
+
+  <div class="inner mt-2">
+
+		<a class="track-click logo" style="margin-top: 2px;" data-track="desktop_header" data-href=":root" href="/">
+			<img src="https://untappd.com/assets/design-system/ut-brand-dark.svg" class="" alt="Untappd"/>
+		</a>
+
+    
+      <div class="get_user_desktop">
+        <a class="sign_in track-click" data-track="mobile_header" data-href=":login" href="/login?go_to=https://untappd.com/search">Sign In</a>
+        <a href="/create" class="join track_click" data-track="mobile_header" data-href=":create">Join Now</a>
+      </div>
+
+    
+    <div class="mobile_menu_btn">Menu</div>
+
+    <div id="nav_site">
+      <ul>
+        <li><a class="track-click" data-track="desktop_menu" data-href=":blog" href="/blog">Blog</a></li>
+        <li><a class="track-click" data-track="desktop_menu" data-href=":beer/top_rated" href="/beer/top_rated">Top Rated</a></li>
+        <li><a class="track-click" data-track="desktop_menu" data-href=":supporter" href="/supporter">Insiders</a></li>
+        <li><a class="track-click" data-track="desktop_menu" data-href=":external/help" target="_blank" href="http://help.untappd.com">Help</a></li>
+        <li><a class="track-click" data-track="desktop_menu" data-href=":shop" target="_blank" href="https://untappd.com/shop">Shop</a></li>
+      </ul>
+      <form class="search_box" method="get" action="/search">
+        <input type="text" class="track-focus search-input-desktop" autocomplete="off" data-track="desktop_search" placeholder="Find a beer, brewery or bar..." name="q" aria-label="Find a beer, brewery or bar search" />
+        <input type="submit" value="Submit the form!" style="position: absolute; top: 0; left: 0; z-index: 0; width: 1px; height: 1px; visibility: hidden;" />
+        <div class="autocomplete">
+        </div>
+      </form>
+    </div>
+    </div>
+</header>
+<style type="text/css">
+    .ac-selected {
+        background-color: #f8f8f8;
+    }
+</style>
+
+<div class="nav_open_overlay"></div>
+<div id="slide">
+
+<script>
+$(document).ready(() => {
+	$(".hide-notice-banner").on("click", function(e) {
+		e.preventDefault();
+		$(this).parent().parent().slideUp();
+		$.post(`/account/hide_notice_wildcard`, {cookie: $(this).attr('data-cookie-name')}, (data) => {
+			console.log(data);
+		}).fail((err) => {
+			console.error(err);
+		})
+	})
+
+	$(".hide-notice-simple").on("click", function(e) {
+		e.preventDefault();
+		$(this).parent().parent().slideUp();
+	})
+
+	feather.replace()
+})
+</script>
+	<div class="leaderboard-ad">
+		<div style="text-align: center;" data-freestar-ad="__336x280 __728x90" id="untappd-com_leaderboard-atf">
+			<script data-cfasync="false" type="text/javascript">
+				freestar.config.enabled_slots.push({ placementName: "untappd-com_leaderboard-atf", slotId: "untappd-com_leaderboard-atf" });
+			</script>
+		</div>
+	</div>
+	<div class="cont search-page">
+
+	<div class="main">
+		<div class="box">
+			<div class="results content">
+
+				<div class="search">
+					<form method="/search" method="get">
+						<input type="text" id="search-term" name="q" aria-label="Beer search" value="ipa"><span class="button yellow">Search<input type="submit" aria-label="search button"></span>
+						<input type="hidden" id="page-type" name="type" value="beer" />
+						<input type="hidden" id="sort-type" name="sort" value="all" />
+					</form>
+				</div>
+
+				
+					<div class="filter">
+						<a href="#" data-filter="beer" class="active section-toggle track-click" data-track="search" data-type="beer" data-href=":beer_toggle">
+							Beer
+						</a><a data-filter="brewery" class="section-toggle track-click" data-track="search" data-type="beer" data-href=":brewery_toggle" href="#">
+							Brewery
+						</a><a data-filter="venues" class="section-toggle track-click" data-track="search" data-type="beer" data-href=":venue_togle" href="#">
+							Venue
+						</a>
+					</div>
+										<div class="result-list beer-list">
+													<div class="results-list-top">
+
+								<p class="total"><strong>381485 beer</strong> results for <strong>"ipa"</strong></p>
+
+																	<div class="sort">
+										<p>
+											Sort by:
+											<select id="sort_picker" data-type="beer" aria-label="Sort by selection">
+																									<option value="all" SELECTED="TRUE">Most Popular</option>
+																										<option value="beer_name_asc">Beer Name (Asc)</option>
+																										<option value="beer_name_desc">Beer Name (Desc)</option>
+																										<option value="brewery">Brewery Name</option>
+																										<option value="highest_abv">Highest ABV</option>
+																										<option value="lowest_abv">Lowest ABV</option>
+																								</select>
+										</p>
+									</div>
+									
+							</div>
+						
+						<div class="results-container">
+													<div class="beer-item ">
+								<a class="label" href="/beer/4509">
+									<img src="https://assets.untappd.com/site/beer_logos/beer-4509_21190_sm.jpeg" alt="IPA label">
+								</a><div class="beer-details">
+									<p class="name"><a href="/b/lagunitas-brewing-company-ipa/4509">IPA</a></p>
+									<p class="brewery"><a href="/LagunitasBrewingCo">Lagunitas Brewing Company</a></p>
+									<p class="style">IPA - American</p>
+																	</div>
+								<div class="details beer">
+									<p class="abv">
+										6.2% ABV
+									</p><p class="ibu">
+										51 IBU									</p>
+									<div class="rating">
+										<div class="caps" data-rating="3.689">
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-70"></div>
+		<div class="cap"></div>
+	</div>										<span class="num">(3.689)</span>
+									</div>
+								</div>
+							</div>
+														<div class="beer-item ">
+								<a class="label" href="/beer/4133">
+									<img src="https://assets.untappd.com/site/beer_logos/beer-4133_1231d_sm.jpeg" alt="Two Hearted IPA label">
+								</a><div class="beer-details">
+									<p class="name"><a href="/b/bells-brewery-two-hearted-ipa/4133">Two Hearted IPA</a></p>
+									<p class="brewery"><a href="/bellsbrewery">Bell’s Brewery</a></p>
+									<p class="style">IPA - American</p>
+																	</div>
+								<div class="details beer">
+									<p class="abv">
+										7% ABV
+									</p><p class="ibu">
+										55 IBU									</p>
+									<div class="rating">
+										<div class="caps" data-rating="3.937">
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-90"></div>
+		<div class="cap"></div>
+	</div>										<span class="num">(3.937)</span>
+									</div>
+								</div>
+							</div>
+														<div class="beer-item ">
+								<a class="label" href="/beer/1353">
+									<img src="https://assets.untappd.com/site/beer_logos/beer-1353_32871_sm.jpeg" alt="Goose IPA label">
+								</a><div class="beer-details">
+									<p class="name"><a href="/b/goose-island-beer-co-goose-ipa/1353">Goose IPA</a></p>
+									<p class="brewery"><a href="/gooseisland">Goose Island Beer Co.</a></p>
+									<p class="style">IPA - American</p>
+																	</div>
+								<div class="details beer">
+									<p class="abv">
+										5.9% ABV
+									</p><p class="ibu">
+										55 IBU									</p>
+									<div class="rating">
+										<div class="caps" data-rating="3.507">
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-50"></div>
+		<div class="cap"></div>
+	</div>										<span class="num">(3.507)</span>
+									</div>
+								</div>
+							</div>
+														<div class="beer-item ">
+								<a class="label" href="/beer/36834">
+									<img src="https://assets.untappd.com/site/beer_logos/beer-36834_5e782_sm.jpeg" alt="All Day IPA label">
+								</a><div class="beer-details">
+									<p class="name"><a href="/b/founders-brewing-co-all-day-ipa/36834">All Day IPA</a></p>
+									<p class="brewery"><a href="/foundersbrewing">Founders Brewing Co.</a></p>
+									<p class="style">IPA - Session</p>
+																	</div>
+								<div class="details beer">
+									<p class="abv">
+										4.7% ABV
+									</p><p class="ibu">
+										42 IBU									</p>
+									<div class="rating">
+										<div class="caps" data-rating="3.688">
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-70"></div>
+		<div class="cap"></div>
+	</div>										<span class="num">(3.688)</span>
+									</div>
+								</div>
+							</div>
+														<div class="beer-item ">
+								<a class="label" href="/beer/5702">
+									<img src="https://assets.untappd.com/site/beer_logos/beer-5702_276fe_sm.jpeg" alt="Punk IPA label">
+								</a><div class="beer-details">
+									<p class="name"><a href="/b/brewdog-punk-ipa/5702">Punk IPA</a></p>
+									<p class="brewery"><a href="/brewdogbrewery">BrewDog</a></p>
+									<p class="style">IPA - American</p>
+																	</div>
+								<div class="details beer">
+									<p class="abv">
+										5.2% ABV
+									</p><p class="ibu">
+										35 IBU									</p>
+									<div class="rating">
+										<div class="caps" data-rating="3.702">
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-100"></div>
+		<div class="cap cap-70"></div>
+		<div class="cap"></div>
+	</div>										<span class="num">(3.702)</span>
+									</div>
+								</div>
+							</div>
+													</div>
+
+						
+														<div class="feed-block search-block">
+
+									<div class="feed-block-login">
+										<p><strong>Please sign in to view more.</strong></p>
+										<span>If you don’t have an account, <a href="/create?source=search">you can create one here</a>.</span>
+										<a href="/login?go_to=https%3A%2F%2Funtappd.com%2Fsearch%3Fq%3Dipa%26type%3Dbeer" class="yellow button">Sign In</a>
+									</div>
+
+									<div class="feed-block-fade"></div>
+
+									<div class="feed-block-item">
+										<div class="feed-block-avatar"></div>
+										<div class="feed-block-content">
+											<p></p>
+											<p></p>
+											<p></p>
+										</div>
+									</div>
+									<div class="feed-block-item">
+										<div class="feed-block-avatar"></div>
+										<div class="feed-block-content">
+											<p></p>
+											<p></p>
+											<p></p>
+										</div>
+									</div>
+
+								</div>
+								
+					</div>
+								</div>
+			    <div style="text-align: center;" data-freestar-ad="__240x400 __336x280" id="untappd-com_untappd_bottom">
+        <script data-cfasync="false" type="text/javascript">
+            freestar.config.enabled_slots.push({ placementName: "untappd-com_untappd_bottom", slotId: "untappd-com_untappd_bottom" });
+        </script>
+    </div>
+	
+		</div>
+	</div>
+
+	<div class="sidebar">
+
+			<div class="box">
+		<div style="text-align: center;" data-freestar-ad="__336x280" id="untappd-com_untappd_siderail_right_atf">
+			<script data-cfasync="false" type="text/javascript">
+				freestar.config.enabled_slots.push({ placementName: "untappd-com_untappd_siderail_right_atf", slotId: "untappd-com_untappd_siderail_right_atf" });
+			</script>
+		</div>
+	</div>
+	        <div class="box">
+            <div class="content">
+                <h3>Global Top Beers</h3>                    <div class="item">
+                        <a href="/b/guinness-guinness-draught/4473" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-4473_1cbe8_sm.jpeg" alt="Guinness Draught label">
+                            </p><p class="text">
+                                <span class="name">Guinness Draught</span>
+                                <span class="brewery">Guinness</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/hooglander-bier-gin-credible/6494658" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-6494658_6b156_sm.jpeg" alt="Gin Credible label">
+                            </p><p class="text">
+                                <span class="name">Gin Credible</span>
+                                <span class="brewery">Hooglander Bier</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/sierra-nevada-brewing-co-celebration/16630" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-16630_5a42c_sm.jpeg" alt="Celebration label">
+                            </p><p class="text">
+                                <span class="name">Celebration</span>
+                                <span class="brewery">Sierra Nevada Brewing Co.</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/moersleutel-craft-brewery-blueprints-jigsaw/6497374" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-6497374_5a773_sm.jpeg" alt="Blueprints: Jigsaw label">
+                            </p><p class="text">
+                                <span class="name">Blueprints: Jigsaw</span>
+                                <span class="brewery">Moersleutel Craft Brewery</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/firestone-walker-brewing-company-oaktoberfest/10822" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-10822_b78eb_sm.jpeg" alt="Oaktoberfest label">
+                            </p><p class="text">
+                                <span class="name">Oaktoberfest</span>
+                                <span class="brewery">Firestone Walker Brewing Company</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/privatbrauerei-m-c-wieninger-zwickl/95482" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-Zwickl_95482.jpeg" alt="Zwickl label">
+                            </p><p class="text">
+                                <span class="name">Zwickl</span>
+                                <span class="brewery">Privatbrauerei M.C. Wieninger</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/samuel-adams-winter-white-ale/6449496" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-6449496_c7af9_sm.jpeg" alt="Winter White Ale label">
+                            </p><p class="text">
+                                <span class="name">Winter White Ale</span>
+                                <span class="brewery">Samuel Adams</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/goose-island-beer-co-bourbon-county-brand-stout/8343" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-8343_4245e_sm.jpeg" alt="Bourbon County Brand Stout label">
+                            </p><p class="text">
+                                <span class="name">Bourbon County Brand Stout</span>
+                                <span class="brewery">Goose Island Beer Co.</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/ninkasi-brewing-company-experimental-ipa-xpa/5923511" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-5923511_6913c_sm.jpeg" alt="Experimental IPA (XPA) label">
+                            </p><p class="text">
+                                <span class="name">Experimental IPA (XPA)</span>
+                                <span class="brewery">Ninkasi Brewing Company</span>                            </p>
+                        </a>
+                    </div>
+                                        <div class="item">
+                        <a href="/b/abita-brewing-company-pecan-ale/2215744" class="track-click" data-track="sidebar" data-href=":beer/toplist">
+                            <p class="logo">
+                                    <img src="https://assets.untappd.com/site/beer_logos/beer-2215744_d887b_sm.jpeg" alt="Pecan Ale label">
+                            </p><p class="text">
+                                <span class="name">Pecan Ale</span>
+                                <span class="brewery">Abita Brewing Company</span>                            </p>
+                        </a>
+                    </div>
+                                </div>
+        </div>
+            	<div class="box">
+        	<div class="content">
+                <h3>Trending Locations</h3>                    <div class="item" data-track-venue-impression="venue_id-9917985-type-trending_locations">
+                        <a href="/v/at-home/9917985" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://assets.untappd.com/venuelogos/venue_9917985_b3a5d245_bg_176.png?v=1" alt="Untappd at Home logo">
+                            </p><p class="text">
+                                <span class="name">Untappd at Home</span>
+
+                                <span class="location">United States</span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-8899647-type-trending_locations">
+                        <a href="/v/haket/8899647" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/logos/acec630924a54bf70d970620a3f42c3c4d4e866e.jpg?auto=compress" alt="Haket logo">
+                            </p><p class="text">
+                                <span class="name">Haket</span>
+
+                                <span class="location">Gothenburg, Västra Götalands län                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-9457305-type-trending_locations">
+                        <a href="/v/goblet-beer-store-zg/9457305" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/vKcsG71U8Hf8zxficaZttH8v?auto=compress" alt="Goblet - Beer Store ZG logo">
+                            </p><p class="text">
+                                <span class="name">Goblet - Beer Store ZG</span>
+
+                                <span class="location">Zagreb, Grad Zagreb                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-7795784-type-trending_locations">
+                        <a href="/v/mikkeller-cph-airport/7795784" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/uL8cyoDJgczeaUEPLznGnovd?auto=compress" alt="Mikkeller CPH Airport logo">
+                            </p><p class="text">
+                                <span class="name">Mikkeller CPH Airport</span>
+
+                                <span class="location">Kastrup, Region Hovedstaden                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-19006-type-trending_locations">
+                        <a href="/v/olutravintola-konttori/19006" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/vmmtkc7gjf5qd105wytw3ox6apvw?auto=compress" alt="Olutravintola Konttori logo">
+                            </p><p class="text">
+                                <span class="name">Olutravintola Konttori</span>
+
+                                <span class="location">Tampere, Pirkanmaa                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-10165768-type-trending_locations">
+                        <a href="/v/hop-hooligans-taproom/10165768" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/o06kvy3o8806e7xavoiy160mzzdo?auto=compress" alt="Hop Hooligans Taproom logo">
+                            </p><p class="text">
+                                <span class="name">Hop Hooligans Taproom</span>
+
+                                <span class="location">București, București                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-209821-type-trending_locations">
+                        <a href="/v/apollon-platebar/209821" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/logos/ebf7c4e0265f59baa6cfd9f4e383dd3c17538bd0.jpg?auto=compress" alt="Apollon Platebar logo">
+                            </p><p class="text">
+                                <span class="name">Apollon Platebar</span>
+
+                                <span class="location">Bergen, Hordaland                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-92242-type-trending_locations">
+                        <a href="/v/the-bishops-arms-malmo-plaza/92242" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/e74wj0d1b053ailg6za7jwxb2lwq?auto=compress" alt="The Bishops Arms Malmö Plaza logo">
+                            </p><p class="text">
+                                <span class="name">The Bishops Arms Malmö Plaza</span>
+
+                                <span class="location">Malmö, Skåne län                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-5214359-type-trending_locations">
+                        <a href="/v/pien-shop/5214359" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/zvmiq1000h62sden1esinfu4bgor?auto=compress" alt="Pien Shop logo">
+                            </p><p class="text">
+                                <span class="name">Pien Shop</span>
+
+                                <span class="location">HKI, Uusimaa                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			                    <div class="item" data-track-venue-impression="venue_id-40661-type-trending_locations">
+                        <a href="/v/the-bishops-arms-goteborg-plaza/40661" class="track-click" data-track="sidebar" data-href=":venue/toplist">
+                            <p class="logo">
+                                <span>Verified</span>                                <img src="https://images.untp.beer/resize?width=176&height=176&background=255,255,255&extend=white&stripmeta=true&url=https://utfb-images.untappd.com/pwf5ini60lcai4xcjacljsz0caz2?auto=compress" alt="The Bishops Arms Göteborg Plaza logo">
+                            </p><p class="text">
+                                <span class="name">The Bishops Arms Göteborg Plaza</span>
+
+                                <span class="location">Göteborg, Västra Götalands län                                        </span>                            </p>
+                        </a>
+                    </div>
+
+        			        	</div>
+    	</div>
+        <script type="text/javascript">
+            $(document).ready(function() {
+                createImpressionTracker();
+            });
+        </script>
+    		<div class="sticky">
+		<div style="text-align: center;" data-freestar-ad="__300x600" id="untappd-com_untappd_siderail_right_sticky">
+			<script data-cfasync="false" type="text/javascript">
+				freestar.config.enabled_slots.push({ placementName: "untappd-com_untappd_siderail_right_sticky", slotId: "untappd-com_untappd_siderail_right_sticky" });
+			</script>
+		</div>
+	</div>
+	
+	</div>
+
+	<!-- Add Beer Box -->
+	<div class="add-beer-lightbox" style="display: none; position: fixed; background: #fff; z-index: 150;">
+		Loading...
+	</div>
+	<div class="facybox_hide facybox_overlayBG" id="facybox_overlay" style="display: none; opacity: 0.3;"></div>
+
+</div>
+
+<script>
+
+$(document).ready(function() {
+	$(document).on("change", "#beer_type", function() {
+		if ($(this).val == "") {
+			$(this).addClass("empty");
+		}
+		else {
+			$(this).removeClass("empty")
+		}
+	});
+
+	setTimeout(function() {
+		if ($(".sidebar").is(":visible")) {
+			var sidebarHeight = $(".sidebar")[0].scrollHeight;
+			$(".main").css("min-height", sidebarHeight + 108 + "px");
+		}
+	}, 1000)
+	
+});
+
+</script>
+
+<script type="text/javascript" language="Javascript" src="https://untappd.com/assets/v3/js/search.js?v=2.8.33"></script>
+	<footer>
+		<div class="footer-nav">
+			<div class="footer-inner">
+				<ul>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/businesses" href="https://utfb.untappd.com/">Untappd for Business</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/businesses/blog" href="https://lounge.untappd.com/">Untappd for Business Blog</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/breweries" href="https://untappd.com/breweries">Breweries</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/shop" href="https://untappd.com/shop">Shop</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/support" href="http://help.untappd.com/">Support</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/careers" href="/careers">Careers</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/api" href="/api/">API</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/terms" href="/terms">Terms</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/privacy" href="/privacy">Privacy</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/cookie" href="/cookie">Cookie Policy</a>
+					</li>
+					<li>
+						<a class="track-click" data-track="footer" data-href=":footer/personal_data" href="/privacy/personal-data">Do Not Sell My Personal Information</a>
+					</li>
+				</ul>
+			</div>
+		</div>
+		<ul class="social">
+    <li><a class="track-click" data-track="footer" data-href=":footer/social/twitter" href="https://bit.ly/3T6pKK6" target="_blank"><img src="https://untappd.com/assets/custom/homepage/images/icon-twitter.svg" alt="Icon twitter" /></a></li>
+    <li><a class="track-click" data-track="footer" data-href=":footer/social/facebook" href="https://bit.ly/3RVLffu" target="_blank"><img src="https://untappd.com/assets/custom/homepage/images/icon-facebook.svg" alt="Icon facebook" /></a></li>
+    <li><a class="track-click" data-track="home" data-href=":footer/social/instagram" href="https://bit.ly/3EyG9D5" target="_blank"><img src="https://untappd.com/assets/custom/homepage/images/icon-instagram.svg" alt="Icon instagram" /></a></li>
+</ul>	</footer>
+
+<script type="text/javascript">
+	// polyfill for ie11
+	function getUrlParameter(name) {
+		name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+		var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+		var results = regex.exec(location.search);
+		return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+	};
+
+	$(document).ready(function() {
+		// remove any access tokens, preserve other elements
+		if (history.replaceState) {
+			if (location.href.indexOf("access_token=") >= 0) {
+				const accessTokenURL = getUrlParameter("access_token");
+				let currentURL = location.href;
+				let finalURL = currentURL.replace(`access_token=${accessTokenURL}`, '');
+
+				// if the url has a "&" already in it, then remove the "?" and replace the first "&" with an "?"
+				if (finalURL.indexOf("&") >= 0) {
+					finalURL = finalURL.replace("?", "").replace("&", "?");
+				} else {
+					finalURL = finalURL.split("?")[0];
+				}
+
+				history.replaceState(null, "", finalURL);
+			}
+		}
+	})
+</script>
+
+<script type="text/javascript">
+	// Clear Text Feild
+	function clearText(thefield) {
+		if (thefield.defaultValue == thefield.value)
+			thefield.value = ""
+	}
+</script>
+
+			<script>(function(){/*
+				Copyright The Closure Library Authors.
+				SPDX-License-Identifier: Apache-2.0
+				*/
+				'use strict';var g=function(a){var b=0;return function(){return b<a.length?{done:!1,value:a[b++]}:{done:!0}}},l=this||self,m=/^[\w+/_-]+[=]{0,2}$/,p=null,q=function(){},r=function(a){var b=typeof a;if("object"==b)if(a){if(a instanceof Array)return"array";if(a instanceof Object)return b;var c=Object.prototype.toString.call(a);if("[object Window]"==c)return"object";if("[object Array]"==c||"number"==typeof a.length&&"undefined"!=typeof a.splice&&"undefined"!=typeof a.propertyIsEnumerable&&!a.propertyIsEnumerable("splice"))return"array";
+				if("[object Function]"==c||"undefined"!=typeof a.call&&"undefined"!=typeof a.propertyIsEnumerable&&!a.propertyIsEnumerable("call"))return"function"}else return"null";else if("function"==b&&"undefined"==typeof a.call)return"object";return b},u=function(a,b){function c(){}c.prototype=b.prototype;a.prototype=new c;a.prototype.constructor=a};var v=function(a,b){Object.defineProperty(l,a,{configurable:!1,get:function(){return b},set:q})};var y=function(a,b){this.b=a===w&&b||"";this.a=x},x={},w={};var aa=function(a,b){a.src=b instanceof y&&b.constructor===y&&b.a===x?b.b:"type_error:TrustedResourceUrl";if(null===p)b:{b=l.document;if((b=b.querySelector&&b.querySelector("script[nonce]"))&&(b=b.nonce||b.getAttribute("nonce"))&&m.test(b)){p=b;break b}p=""}b=p;b&&a.setAttribute("nonce",b)};var z=function(){return Math.floor(2147483648*Math.random()).toString(36)+Math.abs(Math.floor(2147483648*Math.random())^+new Date).toString(36)};var A=function(a,b){b=String(b);"application/xhtml+xml"===a.contentType&&(b=b.toLowerCase());return a.createElement(b)},B=function(a){this.a=a||l.document||document};B.prototype.appendChild=function(a,b){a.appendChild(b)};var C=function(a,b,c,d,e,f){try{var k=a.a,h=A(a.a,"SCRIPT");h.async=!0;aa(h,b);k.head.appendChild(h);h.addEventListener("load",function(){e();d&&k.head.removeChild(h)});h.addEventListener("error",function(){0<c?C(a,b,c-1,d,e,f):(d&&k.head.removeChild(h),f())})}catch(n){f()}};var ba=l.atob("aHR0cHM6Ly93d3cuZ3N0YXRpYy5jb20vaW1hZ2VzL2ljb25zL21hdGVyaWFsL3N5c3RlbS8xeC93YXJuaW5nX2FtYmVyXzI0ZHAucG5n"),ca=l.atob("WW91IGFyZSBzZWVpbmcgdGhpcyBtZXNzYWdlIGJlY2F1c2UgYWQgb3Igc2NyaXB0IGJsb2NraW5nIHNvZnR3YXJlIGlzIGludGVyZmVyaW5nIHdpdGggdGhpcyBwYWdlLg=="),da=l.atob("RGlzYWJsZSBhbnkgYWQgb3Igc2NyaXB0IGJsb2NraW5nIHNvZnR3YXJlLCB0aGVuIHJlbG9hZCB0aGlzIHBhZ2Uu"),ea=function(a,b,c){this.b=a;this.f=new B(this.b);this.a=null;this.c=[];this.g=!1;this.i=b;this.h=c},F=function(a){if(a.b.body&&!a.g){var b=
+				function(){D(a);l.setTimeout(function(){return E(a,3)},50)};C(a.f,a.i,2,!0,function(){l[a.h]||b()},b);a.g=!0}},D=function(a){for(var b=G(1,5),c=0;c<b;c++){var d=H(a);a.b.body.appendChild(d);a.c.push(d)}b=H(a);b.style.bottom="0";b.style.left="0";b.style.position="fixed";b.style.width=G(100,110).toString()+"%";b.style.zIndex=G(2147483544,2147483644).toString();b.style["background-color"]=I(249,259,242,252,219,229);b.style["box-shadow"]="0 0 12px #888";b.style.color=I(0,10,0,10,0,10);b.style.display=
+				"flex";b.style["justify-content"]="center";b.style["font-family"]="Roboto, Arial";c=H(a);c.style.width=G(80,85).toString()+"%";c.style.maxWidth=G(750,775).toString()+"px";c.style.margin="24px";c.style.display="flex";c.style["align-items"]="flex-start";c.style["justify-content"]="center";d=A(a.f.a,"IMG");d.className=z();d.src=ba;d.style.height="24px";d.style.width="24px";d.style["padding-right"]="16px";var e=H(a),f=H(a);f.style["font-weight"]="bold";f.textContent=ca;var k=H(a);k.textContent=da;J(a,
+				e,f);J(a,e,k);J(a,c,d);J(a,c,e);J(a,b,c);a.a=b;a.b.body.appendChild(a.a);b=G(1,5);for(c=0;c<b;c++)d=H(a),a.b.body.appendChild(d),a.c.push(d)},J=function(a,b,c){for(var d=G(1,5),e=0;e<d;e++){var f=H(a);b.appendChild(f)}b.appendChild(c);c=G(1,5);for(d=0;d<c;d++)e=H(a),b.appendChild(e)},G=function(a,b){return Math.floor(a+Math.random()*(b-a))},I=function(a,b,c,d,e,f){return"rgb("+G(Math.max(a,0),Math.min(b,255)).toString()+","+G(Math.max(c,0),Math.min(d,255)).toString()+","+G(Math.max(e,0),Math.min(f,
+				255)).toString()+")"},H=function(a){a=A(a.f.a,"DIV");a.className=z();return a},E=function(a,b){0>=b||null!=a.a&&0!=a.a.offsetHeight&&0!=a.a.offsetWidth||(fa(a),D(a),l.setTimeout(function(){return E(a,b-1)},50))},fa=function(a){var b=a.c;var c="undefined"!=typeof Symbol&&Symbol.iterator&&b[Symbol.iterator];b=c?c.call(b):{next:g(b)};for(c=b.next();!c.done;c=b.next())(c=c.value)&&c.parentNode&&c.parentNode.removeChild(c);a.c=[];(b=a.a)&&b.parentNode&&b.parentNode.removeChild(b);a.a=null};var ia=function(a,b,c,d,e){var f=ha(c),k=function(n){n.appendChild(f);l.setTimeout(function(){f?(0!==f.offsetHeight&&0!==f.offsetWidth?b():a(),f.parentNode&&f.parentNode.removeChild(f)):a()},d)},h=function(n){document.body?k(document.body):0<n?l.setTimeout(function(){h(n-1)},e):b()};h(3)},ha=function(a){var b=document.createElement("div");b.className=a;b.style.width="1px";b.style.height="1px";b.style.position="absolute";b.style.left="-10000px";b.style.top="-10000px";b.style.zIndex="-10000";return b};var K={},L=null;var M=function(){},N="function"==typeof Uint8Array,O=function(a,b){a.b=null;b||(b=[]);a.j=void 0;a.f=-1;a.a=b;a:{if(b=a.a.length){--b;var c=a.a[b];if(!(null===c||"object"!=typeof c||Array.isArray(c)||N&&c instanceof Uint8Array)){a.g=b-a.f;a.c=c;break a}}a.g=Number.MAX_VALUE}a.i={}},P=[],Q=function(a,b){if(b<a.g){b+=a.f;var c=a.a[b];return c===P?a.a[b]=[]:c}if(a.c)return c=a.c[b],c===P?a.c[b]=[]:c},R=function(a,b,c){a.b||(a.b={});if(!a.b[c]){var d=Q(a,c);d&&(a.b[c]=new b(d))}return a.b[c]};
+				M.prototype.h=N?function(){var a=Uint8Array.prototype.toJSON;Uint8Array.prototype.toJSON=function(){var b;void 0===b&&(b=0);if(!L){L={};for(var c="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".split(""),d=["+/=","+/","-_=","-_.","-_"],e=0;5>e;e++){var f=c.concat(d[e].split(""));K[e]=f;for(var k=0;k<f.length;k++){var h=f[k];void 0===L[h]&&(L[h]=k)}}}b=K[b];c=[];for(d=0;d<this.length;d+=3){var n=this[d],t=(e=d+1<this.length)?this[d+1]:0;h=(f=d+2<this.length)?this[d+2]:0;k=n>>2;n=(n&
+				3)<<4|t>>4;t=(t&15)<<2|h>>6;h&=63;f||(h=64,e||(t=64));c.push(b[k],b[n],b[t]||"",b[h]||"")}return c.join("")};try{return JSON.stringify(this.a&&this.a,S)}finally{Uint8Array.prototype.toJSON=a}}:function(){return JSON.stringify(this.a&&this.a,S)};var S=function(a,b){return"number"!==typeof b||!isNaN(b)&&Infinity!==b&&-Infinity!==b?b:String(b)};M.prototype.toString=function(){return this.a.toString()};var T=function(a){O(this,a)};u(T,M);var U=function(a){O(this,a)};u(U,M);var ja=function(a,b){this.c=new B(a);var c=R(b,T,5);c=new y(w,Q(c,4)||"");this.b=new ea(a,c,Q(b,4));this.a=b},ka=function(a,b,c,d){b=new T(b?JSON.parse(b):null);b=new y(w,Q(b,4)||"");C(a.c,b,3,!1,c,function(){ia(function(){F(a.b);d(!1)},function(){d(!0)},Q(a.a,2),Q(a.a,3),Q(a.a,1))})};var la=function(a,b){V(a,"internal_api_load_with_sb",function(c,d,e){ka(b,c,d,e)});V(a,"internal_api_sb",function(){F(b.b)})},V=function(a,b,c){a=l.btoa(a+b);v(a,c)},W=function(a,b,c){for(var d=[],e=2;e<arguments.length;++e)d[e-2]=arguments[e];e=l.btoa(a+b);e=l[e];if("function"==r(e))e.apply(null,d);else throw Error("API not exported.");};var X=function(a){O(this,a)};u(X,M);var Y=function(a){this.h=window;this.a=a;this.b=Q(this.a,1);this.f=R(this.a,T,2);this.g=R(this.a,U,3);this.c=!1};Y.prototype.start=function(){ma();var a=new ja(this.h.document,this.g);la(this.b,a);na(this)};
+				var ma=function(){var a=function(){if(!l.frames.googlefcPresent)if(document.body){var b=document.createElement("iframe");b.style.display="none";b.style.width="0px";b.style.height="0px";b.style.border="none";b.style.zIndex="-1000";b.style.left="-1000px";b.style.top="-1000px";b.name="googlefcPresent";document.body.appendChild(b)}else l.setTimeout(a,5)};a()},na=function(a){var b=Date.now();W(a.b,"internal_api_load_with_sb",a.f.h(),function(){var c;var d=a.b,e=l[l.btoa(d+"loader_js")];if(e){e=l.atob(e);
+				e=parseInt(e,10);d=l.btoa(d+"loader_js").split(".");var f=l;d[0]in f||"undefined"==typeof f.execScript||f.execScript("var "+d[0]);for(;d.length&&(c=d.shift());)d.length?f[c]&&f[c]!==Object.prototype[c]?f=f[c]:f=f[c]={}:f[c]=null;c=Math.abs(b-e);c=1728E5>c?0:c}else c=-1;0!=c&&(W(a.b,"internal_api_sb"),Z(a,Q(a.a,6)))},function(c){Z(a,c?Q(a.a,4):Q(a.a,5))})},Z=function(a,b){a.c||(a.c=!0,a=new l.XMLHttpRequest,a.open("GET",b,!0),a.send())};(function(a,b){l[a]=function(c){for(var d=[],e=0;e<arguments.length;++e)d[e-0]=arguments[e];l[a]=q;b.apply(null,d)}})("__d3lUW8vwsKlB__",function(a){"function"==typeof window.atob&&(a=window.atob(a),a=new X(a?JSON.parse(a):null),(new Y(a)).start())});}).call(this);
+
+				window.__d3lUW8vwsKlB__("WyI4OTQ0NDYwMjIxYjYyZTkxIixbbnVsbCxudWxsLG51bGwsImh0dHBzOi8vZnVuZGluZ2Nob2ljZXNtZXNzYWdlcy5nb29nbGUuY29tL2YvQUdTS1d4VXRKNVlvdjhfYjNSd19pZWtuaDZVZ0hNR3JsNk1NVTVSVzhrTEpSQXdZdk5wTzFEZ2ZYajNqNld2dkY2N2ZTbWdXdk96X3BNa0NkN1hSNjNUZXZ4QVx1MDAzZCJdCixbMjAsImRpdi1ncHQtYWQiLDEwMCwiT0RrME5EUTJNREl5TVdJMk1tVTVNUVx1MDAzZFx1MDAzZCIsW251bGwsbnVsbCxudWxsLCJodHRwczovL3d3dy5nc3RhdGljLmNvbS8wZW1uL2YvcC84OTQ0NDYwMjIxYjYyZTkxLmpzP3VzcXBcdTAwM2RDQkkiXQpdCiwiaHR0cHM6Ly9mdW5kaW5nY2hvaWNlc21lc3NhZ2VzLmdvb2dsZS5jb20vbC9BR1NLV3hWbXlIMUpTYThtNENEcGtrUEtDNEt0YVRPOC1hZmU0RzhkSTdNMDNrT2R3NEtmVVVZUHFYc296NncycFZGc0Fid3E5S0l6ZDFYMmxGa0VDc2VBP2FiXHUwMDNkMSIsImh0dHBzOi8vZnVuZGluZ2Nob2ljZXNtZXNzYWdlcy5nb29nbGUuY29tL2wvQUdTS1d4Vk1ON0RCVWlmdzFfc2VvN3dON1oxSzFVdWZBZWwzY2lmS3Q3Z1VjZllnVExqWTRfWXpEczhULVhSdmVHVjVadzYzVkk5Wk1ocGh1Sk5SeUVwRj9hYlx1MDAzZDJcdTAwMjZzYmZcdTAwM2QxIiwiaHR0cHM6Ly9mdW5kaW5nY2hvaWNlc21lc3NhZ2VzLmdvb2dsZS5jb20vbC9BR1NLV3hYd0w2ekh6MkRsWWV4alNjTDhGTXJSMnd2dkpBUndoYUk0T1d5YzVtMDlFVi1uTmF4WnRodE0xNjZ0U21DeFUzVm5pc1kzdUM5X1JsaEpiSzZUP3NiZlx1MDAzZDIiXQo=");
+			</script>
+		
+</body>
+</html>

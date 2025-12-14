@@ -39,6 +39,13 @@ CONFIG_DEFAULTS = {
             "include_description": True,
             "max_description_chars": 200,
             "summary_template": DEFAULT_SUMMARY_TEMPLATE,
+            "excluded_domains": [
+                "twitter.com",
+                "www.twitter.com",
+                "mobile.twitter.com",
+                "x.com",
+                "www.x.com",
+            ],
         }
     }
 }
@@ -56,6 +63,7 @@ class ExtractSettings:
     max_urls_per_message: int = CONFIG_DEFAULTS["plugins"]["extract_url"]["max_urls_per_message"]
     include_description: bool = CONFIG_DEFAULTS["plugins"]["extract_url"]["include_description"]
     max_description_chars: int = CONFIG_DEFAULTS["plugins"]["extract_url"]["max_description_chars"]
+    excluded_domains: frozenset = field(default_factory=lambda: frozenset(CONFIG_DEFAULTS["plugins"]["extract_url"]["excluded_domains"]))
     templates: ExtractTemplates = field(default_factory=ExtractTemplates)
 
 
@@ -139,12 +147,13 @@ def _settings_from_config(bot) -> ExtractSettings:
         max_urls_per_message=_get_int("max_urls_per_message", defaults.max_urls_per_message),
         include_description=bool(section.get("include_description", defaults.include_description)),
         max_description_chars=_get_int("max_description_chars", defaults.max_description_chars),
+        excluded_domains=frozenset(section.get("excluded_domains", defaults.excluded_domains)),
         templates=templates,
     )
 
 
 def _fetch_and_format(url: str, settings: ExtractSettings, timeout: int) -> Optional[str]:
-    safe_url = _validate_url(url)
+    safe_url = _validate_url(url, settings)
     if not safe_url:
         logger.debug("Skipping URL due to invalid scheme/host: %s", url)
         return None
@@ -239,12 +248,20 @@ def _clean_text(value: str) -> str:
     return " ".join(value.split())
 
 
-def _validate_url(url: str) -> Optional[str]:
+
+def _validate_url(url: str, settings: Optional[ExtractSettings] = None) -> Optional[str]:
     parsed = urlparse(url)
     if parsed.scheme.lower() not in {"http", "https"}:
         return None
     if not parsed.hostname:
         return None
+    
+    hostname = parsed.hostname.lower()
+    excluded = settings.excluded_domains if settings else frozenset()
+    if hostname in excluded:
+        logger.debug("Skipping excluded domain: %s", hostname)
+        return None
+
     if not _is_public_host(parsed.hostname):
         logger.debug("Rejected non-public host: %s", parsed.hostname)
         return None
