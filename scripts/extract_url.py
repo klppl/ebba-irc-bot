@@ -10,8 +10,10 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urljoin, urlparse
+from pathlib import Path
 
 import requests
+from core.utils import atomic_write_yaml, file_lock, load_yaml_file
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -69,10 +71,87 @@ class ExtractSettings:
 
 def on_load(bot) -> None:
     logger.info("extract_url plugin loaded from %s", __file__)
+    bot.plugin_manager.register_command(
+        "extract_url",
+        "url",
+        _handle_url_command,
+        help_text="Manage URL plugin settings (e.g. .url ignore <domain>)",
+    )
 
 
 def on_unload(bot) -> None:
     logger.info("extract_url plugin unloaded")
+
+
+async def _handle_url_command(bot, user: str, channel: str, args: list[str], is_private: bool) -> None:
+    # Check permissions (admins/owners only)
+    if not bot._has_owner_access(user):
+        await bot.privmsg(channel, "You do not have permission to configure this plugin.")
+        return
+
+    if not args:
+        await bot.privmsg(channel, "Usage: .url ignore <domain>")
+        return
+
+    subcmd = args[0].lower()
+    if subcmd == "ignore":
+        if len(args) < 2:
+            await bot.privmsg(channel, "Usage: .url ignore <domain>")
+            return
+        domain = args[1].lower().strip()
+
+        # Update config file
+        config_path = bot.plugin_manager.get_config_path()
+        if not config_path:
+            await bot.privmsg(channel, "Error: No config path available.")
+            return
+
+        lock_path = config_path.with_suffix(config_path.suffix + ".lock")
+
+        updated = False
+        try:
+            with file_lock(lock_path):
+                data = load_yaml_file(config_path)
+                # Ensure structure exists
+                plugins = data.setdefault("plugins", {})
+                extract = plugins.setdefault("extract_url", {})
+                excluded = extract.get("excluded_domains")
+                if excluded is None:
+                    excluded = []
+                elif not isinstance(excluded, list):
+                    # If it's something else (e.g. strict YAML parsing might make it something else?), reset to list
+                    excluded = list(excluded)
+
+                if domain not in excluded:
+                    excluded.append(domain)
+                    extract["excluded_domains"] = excluded
+                    atomic_write_yaml(config_path, data)
+                    updated = True
+        except Exception:
+            logger.exception("Failed to update config for excluded_domains")
+            await bot.privmsg(channel, "Internal error updating configuration.")
+            return
+
+        if updated:
+            # Update runtime config so it takes effect immediately
+            bot_plugins = bot.config.setdefault("plugins", {})
+            bot_extract = bot_plugins.setdefault("extract_url", {})
+            
+            # Ensure we are working with a list in memory too
+            current_mem = bot_extract.get("excluded_domains")
+            if not isinstance(current_mem, list):
+                 current_mem = []
+                 bot_extract["excluded_domains"] = current_mem
+
+            if domain not in current_mem:
+                current_mem.append(domain)
+
+            await bot.privmsg(channel, f"Added '{domain}' to excluded domains.")
+        else:
+            await bot.privmsg(channel, f"'{domain}' is already excluded.")
+
+    else:
+        await bot.privmsg(channel, f"Unknown subcommand: {subcmd}")
 
 
 def on_message(bot, user: str, channel: str, message: str) -> None:
@@ -258,9 +337,15 @@ def _validate_url(url: str, settings: Optional[ExtractSettings] = None) -> Optio
     
     hostname = parsed.hostname.lower()
     excluded = settings.excluded_domains if settings else frozenset()
-    if hostname in excluded:
-        logger.debug("Skipping excluded domain: %s", hostname)
-        return None
+    
+    # Check hostname and all parent domains
+    # e.g. for "www.example.com", check: "www.example.com", "example.com", "com"
+    parts = hostname.split(".")
+    for i in range(len(parts)):
+        subset = ".".join(parts[i:])
+        if subset in excluded:
+            logger.debug("Skipping excluded domain: %s (matched %s)", hostname, subset)
+            return None
 
     if not _is_public_host(parsed.hostname):
         logger.debug("Rejected non-public host: %s", parsed.hostname)
