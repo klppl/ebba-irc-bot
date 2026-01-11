@@ -203,7 +203,7 @@ class IRCClient:
     async def send_raw(self, message: str) -> None:
         self.logger.debug("> %s", message)
         try:
-            await self._send_queue.put(message)
+            self._send_queue.put_nowait(message)
         except asyncio.QueueFull:
             self.logger.warning("Send queue full; dropping message: %s", message[:200])
             return
