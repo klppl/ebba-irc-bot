@@ -17,7 +17,6 @@ CONFIG_DEFAULTS = {
         "seen": {
             "enabled": True,
             "storage_path": DEFAULT_STORAGE_NAME,
-            "triggers": ["seen"],
         }
     }
 }
@@ -59,11 +58,6 @@ class SeenSettings:
     storage_path: Path = field(
         default_factory=lambda: Path(__file__).resolve().parent / DEFAULT_STORAGE_NAME
     )
-    triggers: List[str] = field(
-        default_factory=lambda: list(
-            CONFIG_DEFAULTS["plugins"]["seen"]["triggers"]
-        )
-    )
 
 
 @dataclass
@@ -80,11 +74,17 @@ def on_load(bot) -> None:
     settings = _settings_from_config(bot)
     entries = _load_entries(settings.storage_path)
     state = SeenState(settings=settings, entries=entries)
-    trigger_text = ", ".join(f"{bot.prefix}{trigger}" for trigger in settings.triggers)
+
+    bot.plugin_manager.register_command(
+        "seen",
+        "seen",
+        _handle_seen_command,
+        help_text="Check when a user was last seen. Usage: .seen <nick>"
+    )
+
     logger.info(
-        "seen plugin loaded with storage at %s; responding to %s",
+        "seen plugin loaded with storage at %s",
         settings.storage_path,
-        trigger_text,
     )
 
 
@@ -98,81 +98,107 @@ def on_unload(bot) -> None:
 
 
 def on_message(bot, user: str, channel: str, message: str) -> None:
-    global state
     if state is None:
         return
-
     nick = _nick_from_prefix(user)
     if not nick:
         return
-
     _record_seen(nick, user, channel, "message")
-
-    prefix = bot.prefix
-    if not message.startswith(prefix):
-        return
-
-    command_body = message[len(prefix) :].strip()
-    if not command_body:
-        return
-
-    parts = command_body.split(maxsplit=1)
-    if not parts:
-        return
-
-    if parts[0].lower() not in state.settings.triggers:
-        return
-
-    if len(parts) == 1 or not parts[1].strip():
-        loop = asyncio.get_running_loop()
-        default_triggers = CONFIG_DEFAULTS["plugins"]["seen"]["triggers"]
-        primary = state.settings.triggers[0] if state.settings.triggers else default_triggers[0]
-        loop.create_task(bot.privmsg(channel, f"Usage: {prefix}{primary} <nick>"))
-        return
-
-    target = parts[1].strip()
-    loop = asyncio.get_running_loop()
-    loop.create_task(_handle_seen_query(bot, channel, target))
 
 
 def on_join(bot, user: str, channel: str) -> None:
-    global state
     if state is None:
         return
-
     nick = _nick_from_prefix(user)
     if not nick:
         return
-
     _record_seen(nick, user, channel, "join")
+
+
+def on_part(bot, user: str, channel: str) -> None:
+    if state is None:
+        return
+    nick = _nick_from_prefix(user)
+    if not nick:
+        return
+    _record_seen(nick, user, channel, "part")
+
+
+def on_nick(bot, user: str, new_nick: str) -> None:
+    if state is None:
+        return
+    old_nick = _nick_from_prefix(user)
+    if not old_nick:
+        return
+    # Record that old nick changed to new nick
+    _record_seen(old_nick, user, "", f"nick change to {new_nick}")
+    # Record new nick appearing
+    _record_seen(new_nick, f"{new_nick}!{user.split('!', 1)[1] if '!' in user else ''}", "", f"nick change from {old_nick}")
+
+
+def on_kick(bot, channel: str, target: str, kicker: str, reason: str) -> None:
+    if state is None:
+        return
+    # Record target being kicked
+    # We might not have the user mask for target, so we leave it empty or guess
+    _record_seen(target, "", channel, f"kicked by {_nick_from_prefix(kicker)}")
+
+
+def on_quit(bot, user: str, reason: str) -> None:
+    if state is None:
+        return
+    nick = _nick_from_prefix(user)
+    if not nick:
+        return
+    _record_seen(nick, user, "", f"quit ({reason})")
+
+
+async def _handle_seen_command(bot, user: str, channel: str, args: List[str], is_private: bool) -> None:
+    if not args:
+        await bot.privmsg(channel, f"Usage: {bot.prefix}seen <nick>")
+        return
+
+    target = args[0].strip()
+    await _handle_seen_query(bot, channel, target)
 
 
 async def _handle_seen_query(bot, channel: str, target: str) -> None:
     assert state is not None
     nick_key = target.lower()
-    channel_key = channel.lower() if channel else ""
-    entry_map = state.entries.get(nick_key, {})
-    entry = entry_map.get(channel_key)
-    if entry is None:
-        await bot.privmsg(channel, f"I have not seen {target} around in this channel.")
+
+    # Check if we have any entries for this nick
+    nick_entries = state.entries.get(nick_key, {})
+    if not nick_entries:
+        await bot.privmsg(channel, f"I have not seen {target} around.")
+        return
+
+    # Find the most recent entry across all channels
+    best_entry: Optional[SeenEntry] = None
+    for entry in nick_entries.values():
+        if best_entry is None or entry.timestamp > best_entry.timestamp:
+            best_entry = entry
+
+    if best_entry is None:
+        await bot.privmsg(channel, f"I have not seen {target} around.")
         return
 
     now = time.time()
-    delta = max(0, now - entry.timestamp)
+    delta = max(0, now - best_entry.timestamp)
     delta_text = _format_timespan(delta)
 
-    activity = _format_activity(entry)
+    activity = _format_activity(best_entry)
 
     await bot.privmsg(
         channel,
-        f"{entry.nick} was last seen {delta_text} ago {activity}.",
+        f"{best_entry.nick} was last seen {delta_text} ago {activity}.",
     )
 
 
 def _record_seen(nick: str, user_mask: str, channel: str, event: str) -> None:
     assert state is not None
     nick_key = nick.lower()
-    channel_key = channel.lower() if channel else ""
+    channel_key = channel.lower() if channel else "_global"
+
     entry = SeenEntry(
         nick=nick,
         user_mask=user_mask,
@@ -180,6 +206,7 @@ def _record_seen(nick: str, user_mask: str, channel: str, event: str) -> None:
         event=event,
         timestamp=time.time(),
     )
+
     bucket = state.entries.setdefault(nick_key, {})
     bucket[channel_key] = entry
     _persist_entries()
@@ -214,7 +241,9 @@ def _format_activity(entry: SeenEntry) -> str:
     event = entry.event.lower() if entry.event else ""
     channel = entry.channel or ""
 
-    if channel.startswith("#"):
+    if "nick change" in event or "quit" in event:
+        location = ""
+    elif channel.startswith("#"):
         location = f"in {channel}"
     elif channel:
         location = f"with {channel}"
@@ -225,10 +254,23 @@ def _format_activity(entry: SeenEntry) -> str:
         action = "talking"
     elif event == "join":
         action = "joining"
+    elif event == "part":
+        action = "parting"
+    elif "kicked" in event:
+        action = "getting kicked"
+    elif "nick change to" in event:
+        new_nick = event.split(" to ")[-1]
+        action = f"changing nick to {new_nick}"
+    elif "nick change from" in event:
+        old_nick = event.split(" from ")[-1]
+        action = f"changing nick from {old_nick}"
+    elif "quit" in event:
+        reason = event.split("(", 1)[1].rstrip(")") if "(" in event else ""
+        action = f"quitting ({reason})" if reason else "quitting"
     else:
-        action = "active"
+        action = event
 
-    return f"{action} {location}"
+    return f"{action} {location}".strip()
 
 
 def _settings_from_config(bot) -> SeenSettings:
@@ -250,9 +292,7 @@ def _settings_from_config(bot) -> SeenSettings:
         else:
             storage_path = candidate_path
 
-    default_triggers = CONFIG_DEFAULTS["plugins"]["seen"]["triggers"]
-    # Triggers are script-defined; ignore config overrides
-    return SeenSettings(storage_path=storage_path, triggers=list(default_triggers))
+    return SeenSettings(storage_path=storage_path)
 
 
 def _load_entries(path: Path) -> Dict[str, Dict[str, SeenEntry]]:
@@ -301,9 +341,6 @@ def _nick_from_prefix(prefix: str) -> str:
     if not prefix:
         return ""
     return prefix.split("!", 1)[0]
-
-
- 
 
 
 def _ingest_loaded_entry(

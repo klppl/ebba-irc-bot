@@ -103,6 +103,14 @@ def on_load(bot) -> None:
         return
 
     state = ChatGPTState(settings=settings, client=client)
+
+    bot.plugin_manager.register_command(
+        "chatgpt",
+        "reset",
+        _handle_reset_command,
+        help_text="Reset the conversation history with ChatGPT for this channel.",
+    )
+
     logger.info("chatgpt plugin loaded from %s with model %s", __file__, settings.model)
 
 
@@ -116,14 +124,6 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
     global state
     if state is None or not state.settings.enabled:
         return
-
-    # Handle reset command first
-    prefix = bot.prefix
-    if message.startswith(prefix):
-        command = message[len(prefix) :].strip().lower()
-        if command == "reset":
-            asyncio.get_running_loop().create_task(_reset_history(bot, channel))
-            return
 
     # Only react when bot is addressed
     pattern = re.compile(rf"^{re.escape(bot.nickname)}(\s+|[:,]\s+)(.*)", re.IGNORECASE)
@@ -256,6 +256,10 @@ async def _send_split_response(
             await asyncio.sleep(max(0.0, settings.message_delay_secs))
     if len(parts) > 1 and len(text) > limit:
         await bot.privmsg(channel, "Response truncated. Ask for details if needed!")
+
+
+async def _handle_reset_command(bot, user: str, channel: str, args: List[str], is_private: bool) -> None:
+    await _reset_history(bot, channel)
 
 
 async def _reset_history(bot, channel: str) -> None:

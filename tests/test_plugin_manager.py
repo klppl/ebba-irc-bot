@@ -87,7 +87,13 @@ async def on_message(bot, user, channel, message):
         self.assertEqual(len(tasks), 5)
         
         # Wait for them to finish
-        await asyncio.sleep(0.5)
+        # 5 tasks, 0.2s each, concurrency 2:
+        # T=0: 2 tasks start
+        # T=0.2: 2 tasks finish, 2 new start
+        # T=0.4: 2 tasks finish, 1 new starts
+        # T=0.6: 1 task finishes
+        # So we need > 0.6s
+        await asyncio.sleep(1.0)
         self.assertEqual(len(tasks), 0)
 
 if __name__ == "__main__":
