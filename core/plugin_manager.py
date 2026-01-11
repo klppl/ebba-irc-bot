@@ -180,6 +180,42 @@ class PluginManager:
                 f"plugin-{name}-on_part",
             )
 
+    def dispatch_nick(self, bot, user: str, new_nick: str) -> None:
+        loop = asyncio.get_running_loop()
+        for name, module in list(self._plugins.items()):
+            handler = getattr(module, "on_nick", None)
+            if not callable(handler):
+                continue
+            self._spawn_task(
+                name,
+                self._run_handler(handler, name, "on_nick", bot, user, new_nick),
+                f"plugin-{name}-on_nick",
+            )
+
+    def dispatch_kick(self, bot, channel: str, target: str, kicker: str, reason: str) -> None:
+        loop = asyncio.get_running_loop()
+        for name, module in list(self._plugins.items()):
+            handler = getattr(module, "on_kick", None)
+            if not callable(handler):
+                continue
+            self._spawn_task(
+                name,
+                self._run_handler(handler, name, "on_kick", bot, channel, target, kicker, reason),
+                f"plugin-{name}-on_kick",
+            )
+
+    def dispatch_quit(self, bot, user: str, reason: str) -> None:
+        loop = asyncio.get_running_loop()
+        for name, module in list(self._plugins.items()):
+            handler = getattr(module, "on_quit", None)
+            if not callable(handler):
+                continue
+            self._spawn_task(
+                name,
+                self._run_handler(handler, name, "on_quit", bot, user, reason),
+                f"plugin-{name}-on_quit",
+            )
+
     def register_command(
         self,
         plugin_name: str,
