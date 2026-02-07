@@ -9,7 +9,7 @@ import yaml
 
 from core.irc_client import IRCClient
 from core.plugin_manager import PluginManager
-from core.utils import setup_logging, validate_required_keys
+from core.utils import load_yaml_file, setup_logging, validate_config
 
 
 CONFIG_ENV_MAP = {
@@ -38,23 +38,7 @@ def load_config(config_path: Path) -> Dict[str, Any]:
         raise ValueError("Configuration root must be a mapping")
 
     apply_env_overrides(data)
-    validate_required_keys(
-        data,
-        {
-            "server": str,
-            "port": int,
-            "use_tls": bool,
-            "nickname": str,
-            "username": str,
-            "realname": str,
-            "channels": list,
-            "prefix": str,
-            "owner_nicks": list,
-            "reconnect_delay_secs": int,
-            "request_timeout_secs": int,
-        },
-    )
-
+    validate_config(data)
     return data
 
 

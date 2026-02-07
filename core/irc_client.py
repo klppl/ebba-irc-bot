@@ -203,7 +203,7 @@ class IRCClient:
     async def send_raw(self, message: str) -> None:
         self.logger.debug("> %s", message)
         try:
-            await self._send_queue.put(message)
+            self._send_queue.put_nowait(message)
         except asyncio.QueueFull:
             self.logger.warning("Send queue full; dropping message: %s", message[:200])
             return
@@ -250,6 +250,18 @@ class IRCClient:
 
         if message.command == "PRIVMSG":
             await self._handle_privmsg(message)
+            return
+
+        if message.command == "NICK":
+            await self._handle_nick(message)
+            return
+
+        if message.command == "KICK":
+            await self._handle_kick(message)
+            return
+
+        if message.command == "QUIT":
+            await self._handle_quit(message)
 
     async def _join_initial_channels(self) -> None:
         first = True
@@ -372,6 +384,52 @@ class IRCClient:
             self._forget_channel(channel)
 
         self.plugin_manager.dispatch_part(self, prefix, channel)
+
+    async def _handle_nick(self, message: IRCMessage) -> None:
+        prefix = message.prefix
+        if prefix is None:
+            return
+
+        new_nick = ""
+        if message.trailing:
+            new_nick = message.trailing
+        elif message.params:
+            new_nick = message.params[0]
+
+        if not new_nick:
+            return
+
+        old_nick = prefix.split("!", 1)[0]
+        if old_nick.lower() == self.nickname.lower():
+            self.nickname = new_nick
+            self.logger.info("My nickname changed from %s to %s", old_nick, new_nick)
+
+        self.plugin_manager.dispatch_nick(self, prefix, new_nick)
+
+    async def _handle_kick(self, message: IRCMessage) -> None:
+        # KICK <channel> <target> :<reason>
+        prefix = message.prefix
+        if prefix is None or len(message.params) < 2:
+            return
+
+        channel = message.params[0]
+        target = message.params[1]
+        reason = message.trailing or ""
+
+        if target.lower() == self.nickname.lower():
+            self.logger.warning("I was kicked from %s by %s: %s", channel, prefix, reason)
+            self._forget_channel(channel)
+            # Optional: auto-rejoin logic could go here
+
+        self.plugin_manager.dispatch_kick(self, channel, target, prefix, reason)
+
+    async def _handle_quit(self, message: IRCMessage) -> None:
+        prefix = message.prefix
+        if prefix is None:
+            return
+
+        reason = message.trailing or ""
+        self.plugin_manager.dispatch_quit(self, prefix, reason)
 
     def _remember_channel(self, channel: str) -> None:
         channel = channel.strip()

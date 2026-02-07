@@ -93,6 +93,29 @@ def validate_required_keys(config: Dict[str, object], required: Dict[str, type])
             raise TypeError(f"Config key '{key}' must be of type {expected_type.__name__}")
 
 
+def validate_config(config: Dict[str, Any]) -> None:
+    """
+    Validate the configuration schema.
+    Raises ValueError or TypeError if the configuration is invalid.
+    """
+    required_keys = {
+        "server": str,
+        "port": int,
+        "nickname": str,
+        "username": str,
+        "realname": str,
+        "channels": list,
+    }
+    validate_required_keys(config, required_keys)
+
+    # Optional keys validation
+    if "use_tls" in config and not isinstance(config["use_tls"], bool):
+        raise TypeError("Config key 'use_tls' must be of type bool")
+
+    if "owner_nicks" in config and not isinstance(config["owner_nicks"], list):
+        raise TypeError("Config key 'owner_nicks' must be of type list")
+
+
 def load_yaml_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
