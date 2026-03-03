@@ -14,32 +14,7 @@ owner_nicks:
   - '~ident@trusted.host'
 reconnect_delay_secs: 5
 request_timeout_secs: 10
-plugins:
-  chatgpt:
-    enabled: false
-    api_key: ""
-    model: gpt-4o-mini
-  bitcoin:
-    enabled: true
-  extract_url:
-    enabled: true
-  fredag:
-    enabled: true
-  instagram:
-    enabled: true
-  reddit:
-    enabled: true
-  svensk_el:
-    enabled: true
-  smhi:
-    enabled: true
-    language: sv-SE
-    user_agent: user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
-    timeout: 15
-  tvmaze:
-    enabled: true
-  twitter:
-    enabled: true
-  ignore:
-    enabled: true
-    ignored_nicks: []
+# Plugins are enabled by default. To disable a plugin:
+# plugins:
+#   plugin_name:
+#     enabled: false

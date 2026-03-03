@@ -38,12 +38,13 @@ python -m pytest tests/test_remindme_plugin.py -v  # single test file
   - `on_load(bot)` / `on_unload(bot)` — lifecycle
   - `on_message(bot, user, channel, message)` — every PRIVMSG
   - `on_join`, `on_part`, `on_nick`, `on_kick`, `on_quit` — IRC events
-- `CONFIG_DEFAULTS` dict in a plugin is auto-merged into `config.yaml` on first load
+- `CONFIG_DEFAULTS` dict in a plugin is merged into in-memory config at runtime (not persisted to disk)
 - Plugins register commands via `bot.plugin_manager.register_command(plugin_name, name, handler, aliases, help_text)`
 - Handlers receive `(bot, user, channel, args, is_private)`
 - Use `bot.privmsg(target, text)` to send messages (rate-limited)
 - Blocking I/O (HTTP requests) must run in executor: `loop.run_in_executor(None, func)`
-- Plugin enable/disable is controlled by `plugins.<name>.enabled` in config.yaml
+- Plugins are enabled by default unless `plugins.<name>.enabled: false` in config.yaml
+- Config is only written when user explicitly acts (`.load`/`.unload`)
 
 **Message flow:** IRC server → reader loop → `parse_irc_message()` → `_handle_privmsg()` → built-in command check → `dispatch_message()` to all plugins + `dispatch_registered_command()` for prefix commands → plugin handlers spawned as async tasks → `bot.privmsg()` → rate limiter → writer loop → IRC server
 

@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 CONFIG_DEFAULTS = {
     "plugins": {
         "example": {
-            "enabled": False,
             "triggers": ["example"],
         }
     }

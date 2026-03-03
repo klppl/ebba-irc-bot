@@ -85,7 +85,7 @@ class PluginManager:
             raise
         return module
 
-    def load(self, plugin_name: str, bot, refresh_config: bool = False) -> None:
+    def load(self, plugin_name: str, bot, refresh_config: bool = False, _persist: bool = True) -> None:
         if refresh_config:
             self._refresh_bot_config(bot)
 
@@ -107,10 +107,11 @@ class PluginManager:
             self._known_plugins.add(plugin_name)
             if plugin_name in self._disabled_plugins:
                 self._disabled_plugins.discard(plugin_name)
-            self._set_plugin_enabled_flag(bot, plugin_name, True)
+            if _persist:
+                self._set_plugin_enabled_flag(bot, plugin_name, True)
             self.logger.info("Loaded plugin '%s'", plugin_name)
 
-    def unload(self, plugin_name: str, bot) -> None:
+    def unload(self, plugin_name: str, bot, _persist: bool = True) -> None:
         module = self._plugins.pop(plugin_name, None)
         if module is None:
             raise RuntimeError(f"Plugin '{plugin_name}' is not loaded")
@@ -126,20 +127,21 @@ class PluginManager:
         module_name = getattr(module, "__name__", self.module_name(plugin_name))
         sys.modules.pop(module_name, None)
         self._disabled_plugins.add(plugin_name)
-        self._set_plugin_enabled_flag(bot, plugin_name, False)
-        
+        if _persist:
+            self._set_plugin_enabled_flag(bot, plugin_name, False)
+
         # Cancel active tasks for this plugin
         tasks = self._plugin_tasks.pop(plugin_name, set())
         for task in tasks:
             if not task.done():
                 task.cancel()
-        
+
         self.logger.info("Unloaded plugin '%s'", plugin_name)
 
     def reload(self, plugin_name: str, bot) -> None:
         self._refresh_bot_config(bot)
-        self.unload(plugin_name, bot)
-        self.load(plugin_name, bot)
+        self.unload(plugin_name, bot, _persist=False)
+        self.load(plugin_name, bot, _persist=False)
 
     def dispatch_message(self, bot, user: str, channel: str, message: str) -> None:
         for name, module in list(self._plugins.items()):
@@ -292,13 +294,11 @@ class PluginManager:
         self._known_plugins = set(available)
 
         for name in available:
-            self._ensure_plugin_entry(bot, name, name not in self._disabled_plugins)
             if name in self._disabled_plugins:
                 self.logger.info("Skipping disabled plugin '%s'", name)
-                self._set_plugin_enabled_flag(bot, name, False)
                 continue
             try:
-                self.load(name, bot)
+                self.load(name, bot, _persist=False)
             except Exception:
                 self.logger.exception("Failed to load plugin '%s'", name)
 
@@ -336,39 +336,9 @@ class PluginManager:
         defaults = getattr(module, "CONFIG_DEFAULTS", None)
         if not isinstance(defaults, dict) or not defaults:
             return
-
-        # Merge into in-memory config for the running bot.
-        try:
-            bot_config = getattr(bot, "config", None)
-            if isinstance(bot_config, dict):
-                self._merge_defaults(bot_config, defaults)
-        except Exception:
-            self.logger.warning("Failed to merge defaults into runtime config for '%s'", plugin_name)
-
-        if not self._config_path:
-            return
-
-        try:
-            if self._config_path.exists():
-                with self._config_path.open("r", encoding="utf-8") as handle:
-                    config_data = yaml.safe_load(handle) or {}
-            else:
-                config_data = {}
-        except Exception:
-            self.logger.warning("Failed to read config file while applying defaults for '%s'", plugin_name, exc_info=True)
-            return
-
-        changed = self._merge_defaults(config_data, defaults)
-        if not changed:
-            return
-
-        try:
-            self._config_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._config_path.open("w", encoding="utf-8") as handle:
-                yaml.safe_dump(config_data, handle, sort_keys=False)
-            self.logger.info("Installed default settings for plugin '%s' in config.yaml", plugin_name)
-        except Exception:
-            self.logger.warning("Failed to write config defaults for '%s'", plugin_name, exc_info=True)
+        bot_config = getattr(bot, "config", None)
+        if isinstance(bot_config, dict):
+            self._merge_defaults(bot_config, defaults)
 
     def _merge_defaults(self, target: Dict, defaults: Dict) -> bool:
         changed = False
@@ -397,11 +367,6 @@ class PluginManager:
                     target[key] = value
                     changed = True
         return changed
-
-    def _ensure_plugin_entry(self, bot, plugin_name: str, enabled: bool) -> None:
-        if hasattr(bot, "config") and isinstance(bot.config, dict):
-            self._ensure_plugin_entry_in_dict(bot.config, plugin_name, enabled)
-        self._ensure_plugin_entry_in_file(plugin_name, enabled)
 
     def _set_plugin_enabled_flag(self, bot, plugin_name: str, enabled: bool) -> None:
         if hasattr(bot, "config") and isinstance(bot.config, dict):
@@ -462,6 +427,15 @@ class PluginManager:
         except Exception:
             self.logger.warning("Failed to write plugin enabled flag for '%s'", plugin_name, exc_info=True)
 
+    def _reapply_all_defaults(self, bot) -> None:
+        bot_config = getattr(bot, "config", None)
+        if not isinstance(bot_config, dict):
+            return
+        for name, module in self._plugins.items():
+            defaults = getattr(module, "CONFIG_DEFAULTS", None)
+            if isinstance(defaults, dict) and defaults:
+                self._merge_defaults(bot_config, defaults)
+
     def _refresh_bot_config(self, bot) -> None:
         if not self._config_path or not self._config_path.exists():
             return
@@ -481,6 +455,7 @@ class PluginManager:
         if isinstance(bot_config, dict):
             bot_config.clear()
             bot_config.update(data)
+            self._reapply_all_defaults(bot)
             refresher = getattr(bot, "refresh_runtime_settings", None)
             if callable(refresher):
                 try:
