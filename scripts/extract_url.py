@@ -171,11 +171,9 @@ def _iter_urls(message: str) -> Iterable[str]:
 
 
 async def _handle_extract(bot, channel: str, url: str, settings: ExtractSettings) -> None:
-    loop = asyncio.get_running_loop()
+    from core.utils import run_blocking
     try:
-        reply = await loop.run_in_executor(
-            None, lambda: _fetch_and_format(url, settings, timeout=bot.request_timeout)
-        )
+        reply = await run_blocking(_fetch_and_format_sync, url, settings, timeout=bot.request_timeout)
     except requests.Timeout as exc:
         logger.warning("Metadata fetch timed out for %s (%s)", url, exc)
         return
@@ -200,13 +198,8 @@ async def _handle_extract(bot, channel: str, url: str, settings: ExtractSettings
 
 
 def _settings_from_config(bot) -> ExtractSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section: Dict[str, Any] = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("extract_url")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "extract_url")
 
     defaults = ExtractSettings()
     templates = ExtractTemplates(
@@ -231,7 +224,7 @@ def _settings_from_config(bot) -> ExtractSettings:
     )
 
 
-def _fetch_and_format(url: str, settings: ExtractSettings, timeout: int) -> Optional[str]:
+def _fetch_and_format_sync(url: str, settings: ExtractSettings, timeout: int) -> Optional[str]:
     safe_url = _validate_url(url, settings)
     if not safe_url:
         logger.debug("Skipping URL due to invalid scheme/host: %s", url)
@@ -261,7 +254,7 @@ def _fetch_and_format(url: str, settings: ExtractSettings, timeout: int) -> Opti
         session.mount("http://", adapter)
         session.mount("https://", adapter)
 
-        body_text, final_url = _fetch_html_with_limits(
+        body_text, final_url = _fetch_html_with_limits_sync(
             session,
             safe_url,
             headers=headers,
@@ -377,7 +370,7 @@ def _is_public_host(hostname: str) -> bool:
     return True
 
 
-def _fetch_html_with_limits(
+def _fetch_html_with_limits_sync(
     session: requests.Session,
     url: str,
     *,

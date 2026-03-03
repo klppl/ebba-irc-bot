@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import time
@@ -137,6 +138,45 @@ def file_lock(lock_path: Path):
     lock = FileLock(str(lock_path))
     with lock:
         yield
+
+
+def get_plugin_config(bot, plugin_name: str) -> dict:
+    """Return the config dict for a plugin, or empty dict if missing."""
+    config = getattr(bot, "config", {})
+    if not isinstance(config, dict):
+        return {}
+    plugins_section = config.get("plugins")
+    if not isinstance(plugins_section, dict):
+        return {}
+    candidate = plugins_section.get(plugin_name)
+    if isinstance(candidate, dict):
+        return candidate
+    return {}
+
+
+async def run_blocking(func, *args, **kwargs):
+    """Run a blocking function in the default executor."""
+    loop = asyncio.get_running_loop()
+    call = functools.partial(func, *args, **kwargs)
+    return await loop.run_in_executor(None, call)
+
+
+async def async_http_get(url: str, *, params=None, timeout: int = 10, **kwargs):
+    """Run requests.get in an executor to avoid blocking the event loop."""
+    import requests
+
+    loop = asyncio.get_running_loop()
+    call = functools.partial(requests.get, url, params=params, timeout=timeout, **kwargs)
+    return await loop.run_in_executor(None, call)
+
+
+async def async_http_post(url: str, *, data=None, json=None, timeout: int = 10, **kwargs):
+    """Run requests.post in an executor to avoid blocking the event loop."""
+    import requests
+
+    loop = asyncio.get_running_loop()
+    call = functools.partial(requests.post, url, data=data, json=json, timeout=timeout, **kwargs)
+    return await loop.run_in_executor(None, call)
 
 
 def atomic_write_yaml(path: Path, data: Dict[str, Any]) -> None:

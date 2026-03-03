@@ -62,8 +62,8 @@ def on_message(bot, user, channel, message):
 async def _fetch_and_reply(bot, channel, symbol):
     try:
         # Run blocking yfinance code in executor
-        loop = asyncio.get_running_loop()
-        ticker_data = await loop.run_in_executor(None, _get_stock_data, symbol)
+        from core.utils import run_blocking
+        ticker_data = await run_blocking(_fetch_stock_data_sync, symbol)
         
         if ticker_data:
             price = ticker_data['price']
@@ -84,7 +84,7 @@ import requests
 
 # ... (existing imports)
 
-def _get_stock_data(symbol):
+def _fetch_stock_data_sync(symbol):
     """Blocking function to get stock data."""
     # 1. Try to search if it doesn't look like a standard ticker (optional, or just fallback)
     # But user wants "apple" -> AAPL. "apple" is not a valid ticker usually, or data won't be found.

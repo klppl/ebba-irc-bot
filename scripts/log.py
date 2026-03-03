@@ -202,13 +202,8 @@ def _init_database(db_path: Path) -> sqlite3.Connection:
 
 def _settings_from_config(bot) -> LogSettings:
     """Load settings from bot config."""
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section: Dict[str, Any] = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("log")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "log")
 
     default_path = Path(__file__).resolve().parent / DEFAULT_STORAGE_NAME
     raw_path = section.get("storage_path")

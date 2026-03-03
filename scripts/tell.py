@@ -166,13 +166,8 @@ def on_join(bot, user: str, channel: str) -> None:
 
 
 def _settings_from_config(bot) -> TellSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else None
-    section = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("tell")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "tell")
 
     default_path = Path(__file__).resolve().parent / DEFAULT_STORAGE_NAME
     raw_path = section.get("storage_path")

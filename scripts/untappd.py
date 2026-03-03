@@ -64,8 +64,8 @@ def on_message(bot, user, channel, message):
 
 async def _fetch_and_reply(bot, channel, query):
     try:
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(None, _search_untappd, query)
+        from core.utils import run_blocking
+        results = await run_blocking(_search_untappd_sync, query)
 
         if not results:
             await bot.privmsg(channel, f"Could not find beer: {query}")
@@ -95,7 +95,7 @@ async def _fetch_and_reply(bot, channel, query):
         await bot.privmsg(channel, f"Error fetching data for {query}")
 
 
-def _search_untappd(query):
+def _search_untappd_sync(query):
     """Blocking function to search Untappd via Algolia API."""
     url = "https://9wbo4rq3ho-dsn.algolia.net/1/indexes/beer/query"
     params = {

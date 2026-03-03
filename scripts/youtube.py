@@ -170,13 +170,10 @@ def _normalize_playlist_id(candidate: str) -> Optional[str]:
 
 
 async def _handle_youtube(bot, channel: str, target: YouTubeTarget, settings: YouTubeSettings) -> None:
-    loop = asyncio.get_running_loop()
+    from core.utils import run_blocking
     request_timeout = getattr(bot, "request_timeout", 0)
     try:
-        lines = await loop.run_in_executor(
-            None,
-            lambda: _fetch_and_format(target, settings, request_timeout),
-        )
+        lines = await run_blocking(_fetch_and_format_sync, target, settings, request_timeout)
     except Exception:
         logger.exception("youtube plugin failed to process target %s", target.original_url)
         return
@@ -186,19 +183,19 @@ async def _handle_youtube(bot, channel: str, target: YouTubeTarget, settings: Yo
             await bot.privmsg(channel, line)
 
 
-def _fetch_and_format(
+def _fetch_and_format_sync(
     target: YouTubeTarget, settings: YouTubeSettings, bot_timeout: int
 ) -> List[str]:
     request_timeout = _resolve_timeout(settings.timeout, bot_timeout)
     messages: List[str] = []
 
     if target.video_id:
-        video_data = _fetch_video_data(target.video_id, settings, request_timeout)
+        video_data = _fetch_video_data_sync(target.video_id, settings, request_timeout)
         if video_data is not None:
             messages.append(_format_video_message(video_data, target.video_id, settings))
 
     if target.playlist_id and settings.playlist_watch:
-        playlist_data = _fetch_playlist_data(
+        playlist_data = _fetch_playlist_data_sync(
             target.playlist_id, settings, request_timeout
         )
         if playlist_data is not None:
@@ -207,7 +204,7 @@ def _fetch_and_format(
     return messages
 
 
-def _fetch_video_data(
+def _fetch_video_data_sync(
     video_id: str, settings: YouTubeSettings, timeout: int
 ) -> Optional[Dict[str, object]]:
     params = {
@@ -240,7 +237,7 @@ def _fetch_video_data(
         return None
 
 
-def _fetch_playlist_data(
+def _fetch_playlist_data_sync(
     playlist_id: str, settings: YouTubeSettings, timeout: int
 ) -> Optional[Dict[str, object]]:
     params = {
@@ -354,13 +351,8 @@ def _format_duration(raw: object) -> Optional[str]:
 
 
 def _settings_from_config(bot) -> YouTubeSettings:
-    config = getattr(bot, "config", {}) or {}
-    plugins_section = config.get("plugins", {}) if isinstance(config, dict) else {}
-    section = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("youtube")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "youtube")
 
     defaults = YouTubeSettings()
     api_key = str(section.get("api_key", defaults.api_key)).strip()

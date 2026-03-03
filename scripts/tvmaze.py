@@ -99,15 +99,9 @@ async def _handle_tvmaze(
 
 
 def _settings_from_config(bot) -> TvMazeSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    tz_name = DEFAULT_TIMEZONE
-    section: Dict[str, Any] = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("tvmaze")
-        if isinstance(candidate, dict):
-            section = candidate
-            tz_name = candidate.get("timezone", DEFAULT_TIMEZONE)
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "tvmaze")
+    tz_name = section.get("timezone", DEFAULT_TIMEZONE)
 
     try:
         tz = ZoneInfo(str(tz_name))
@@ -124,21 +118,16 @@ def _settings_from_config(bot) -> TvMazeSettings:
 
 
 async def _fetch_show_info(query: str, settings: TvMazeSettings, timeout: int) -> Optional[str]:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, lambda: _blocking_fetch_show_info(query, settings.timezone, timeout)
-    )
+    from core.utils import async_http_get
 
-
-def _blocking_fetch_show_info(query: str, tz: ZoneInfo, timeout: int) -> Optional[str]:
     params = {"q": query, "embed": "nextepisode"}
-    response = requests.get(API_URL, params=params, headers=API_HEADERS, timeout=timeout)
+    response = await async_http_get(API_URL, params=params, headers=API_HEADERS, timeout=timeout)
     if response.status_code == 404:
         return None
     response.raise_for_status()
 
     data = response.json()
-    return _format_show_response(data, tz)
+    return _format_show_response(data, settings.timezone)
 
 
 def _format_show_response(data: Dict[str, Any], tz: ZoneInfo) -> Optional[str]:

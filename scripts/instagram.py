@@ -88,11 +88,9 @@ def _iter_urls(message: str) -> Iterable[str]:
 async def _handle_instagram_url(
     bot, channel: str, url: str, settings: InstagramSettings
 ) -> None:
-    loop = asyncio.get_running_loop()
+    from core.utils import run_blocking
     try:
-        reply = await loop.run_in_executor(
-            None, lambda: _fetch_and_format(url, settings, timeout=bot.request_timeout)
-        )
+        reply = await run_blocking(_fetch_and_format_sync, url, settings, timeout=bot.request_timeout)
     except requests.RequestException:
         logger.warning("Instagram request error for %s", url, exc_info=True)
         return
@@ -105,13 +103,8 @@ async def _handle_instagram_url(
 
 
 def _settings_from_config(bot) -> InstagramSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section: Dict[str, object] = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("instagram")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "instagram")
 
     defaults = InstagramSettings()
     templates = InstagramTemplates(
@@ -135,7 +128,7 @@ def _settings_from_config(bot) -> InstagramSettings:
     )
 
 
-def _fetch_and_format(
+def _fetch_and_format_sync(
     url: str, settings: InstagramSettings, timeout: int
 ) -> Optional[str]:
     media_type, shortcode = _extract_path_and_shortcode(url)
@@ -143,7 +136,7 @@ def _fetch_and_format(
         logger.debug("Unable to parse Instagram URL: %s", url)
         return None
 
-    result = _fetch_instagram_data(media_type, shortcode, settings, timeout)
+    result = _fetch_instagram_data_sync(media_type, shortcode, settings, timeout)
     if result is None:
         return None
 
@@ -166,7 +159,7 @@ def _extract_path_and_shortcode(url: str) -> Tuple[Optional[str], Optional[str]]
     return None, None
 
 
-def _fetch_instagram_data(
+def _fetch_instagram_data_sync(
     media_type: str, shortcode: str, settings: InstagramSettings, timeout: int
 ) -> Optional[InstagramResult]:
     embed_path = "reel" if media_type == "reels" else media_type

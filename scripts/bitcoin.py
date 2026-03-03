@@ -5,8 +5,6 @@ import logging
 from dataclasses import dataclass
 from typing import Tuple
 
-import requests
-
 API_URL = "https://api.coingecko.com/api/v3/simple/price"
 API_PARAMS = {"ids": "bitcoin", "vs_currencies": "usd"}
 logger = logging.getLogger(__name__)
@@ -71,28 +69,20 @@ async def _handle_bitcoin_command(bot, channel: str) -> None:
 
 
 async def _fetch_price(timeout: int) -> int:
-    loop = asyncio.get_running_loop()
+    from core.utils import async_http_get
 
-    def request_price() -> int:
-        response = requests.get(API_URL, params=API_PARAMS, timeout=timeout)
-        response.raise_for_status()
-        payload = response.json()
-        price = payload.get("bitcoin", {}).get("usd")
-        if price is None:
-            raise ValueError("Unexpected response payload")
-        return int(round(float(price)))
-
-    return await loop.run_in_executor(None, request_price)
+    response = await async_http_get(API_URL, params=API_PARAMS, timeout=timeout)
+    response.raise_for_status()
+    payload = response.json()
+    price = payload.get("bitcoin", {}).get("usd")
+    if price is None:
+        raise ValueError("Unexpected response payload")
+    return int(round(float(price)))
 
 
 def _settings_from_config(bot) -> BitcoinSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("bitcoin")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    get_plugin_config(bot, "bitcoin")  # validate config exists
 
     default_triggers = tuple(CONFIG_DEFAULTS["plugins"]["bitcoin"]["triggers"])
     # Triggers are script-defined; ignore config overrides

@@ -83,11 +83,9 @@ def _iter_urls(message: str) -> Iterable[str]:
 
 
 async def _handle_reddit_url(bot, channel: str, url: str, settings: RedditSettings) -> None:
-    loop = asyncio.get_running_loop()
+    from core.utils import run_blocking
     try:
-        reply = await loop.run_in_executor(
-            None, lambda: _fetch_and_format(url, settings, timeout=bot.request_timeout)
-        )
+        reply = await run_blocking(_fetch_and_format_sync, url, settings, timeout=bot.request_timeout)
     except requests.RequestException:
         logger.warning("Reddit request error for %s", url, exc_info=True)
         return
@@ -100,13 +98,8 @@ async def _handle_reddit_url(bot, channel: str, url: str, settings: RedditSettin
 
 
 def _settings_from_config(bot) -> RedditSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section: Dict[str, object] = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("reddit")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "reddit")
 
     defaults = RedditSettings()
 
@@ -155,7 +148,7 @@ def _settings_from_config(bot) -> RedditSettings:
     )
 
 
-def _fetch_and_format(url: str, settings: RedditSettings, timeout: int) -> Optional[str]:
+def _fetch_and_format_sync(url: str, settings: RedditSettings, timeout: int) -> Optional[str]:
     parsed = _resolve_reddit_url(url)
     if parsed is None:
         return None

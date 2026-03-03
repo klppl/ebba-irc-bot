@@ -173,14 +173,7 @@ async def _handle_seen_query(bot, channel: str, target: str) -> None:
         return
 
     # Find the most recent entry across all channels
-    best_entry: Optional[SeenEntry] = None
-    for entry in nick_entries.values():
-        if best_entry is None or entry.timestamp > best_entry.timestamp:
-            best_entry = entry
-
-    if best_entry is None:
-        await bot.privmsg(channel, f"I have not seen {target} around.")
-        return
+    best_entry = max(nick_entries.values(), key=lambda e: e.timestamp)
 
     now = time.time()
     delta = max(0, now - best_entry.timestamp)
@@ -274,13 +267,8 @@ def _format_activity(entry: SeenEntry) -> str:
 
 
 def _settings_from_config(bot) -> SeenSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else None
-    section: Dict[str, Any] = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("seen")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "seen")
 
     default_path = Path(__file__).resolve().parent / DEFAULT_STORAGE_NAME
     raw_path = section.get("storage_path")

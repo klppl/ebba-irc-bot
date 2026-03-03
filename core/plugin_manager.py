@@ -142,7 +142,6 @@ class PluginManager:
         self.load(plugin_name, bot)
 
     def dispatch_message(self, bot, user: str, channel: str, message: str) -> None:
-        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_message", None)
             if not callable(handler):
@@ -157,7 +156,6 @@ class PluginManager:
             )
 
     def dispatch_join(self, bot, user: str, channel: str) -> None:
-        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_join", None)
             if not callable(handler):
@@ -169,7 +167,6 @@ class PluginManager:
             )
 
     def dispatch_part(self, bot, user: str, channel: str) -> None:
-        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_part", None)
             if not callable(handler):
@@ -181,7 +178,6 @@ class PluginManager:
             )
 
     def dispatch_nick(self, bot, user: str, new_nick: str) -> None:
-        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_nick", None)
             if not callable(handler):
@@ -193,7 +189,6 @@ class PluginManager:
             )
 
     def dispatch_kick(self, bot, channel: str, target: str, kicker: str, reason: str) -> None:
-        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_kick", None)
             if not callable(handler):
@@ -205,7 +200,6 @@ class PluginManager:
             )
 
     def dispatch_quit(self, bot, user: str, reason: str) -> None:
-        loop = asyncio.get_running_loop()
         for name, module in list(self._plugins.items()):
             handler = getattr(module, "on_quit", None)
             if not callable(handler):

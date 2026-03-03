@@ -166,11 +166,9 @@ async def _handle_weather_command(
     if isinstance(request_timeout, (int, float)) and request_timeout > 0:
         timeout = max(1, min(timeout, int(request_timeout)))
 
-    loop = asyncio.get_running_loop()
+    from core.utils import run_blocking
     try:
-        forecast, error = await loop.run_in_executor(
-            None, lambda: _fetch_forecast_for_city(city, settings, timeout)
-        )
+        forecast, error = await run_blocking(_fetch_forecast_for_city_sync, city, settings, timeout)
     except Exception:  # pragma: no cover - network failures
         logger.exception("smhi lookup failed for %s", city)
         await bot.privmsg(channel, f"Kunde inte hämta väder för {city}.")
@@ -189,14 +187,8 @@ async def _handle_weather_command(
 
 
 def _settings_from_config(bot) -> SMHISettings:
-    config = getattr(bot, "config", {})
-    plugin_section: Dict[str, Any] = {}
-    if isinstance(config, dict):
-        plugins = config.get("plugins")
-        if isinstance(plugins, dict):
-            candidate = plugins.get("smhi")
-            if isinstance(candidate, dict):
-                plugin_section = candidate
+    from core.utils import get_plugin_config
+    plugin_section = get_plugin_config(bot, "smhi")
 
     defaults = CONFIG_DEFAULTS["plugins"]["smhi"]
     language_raw = plugin_section.get("language", defaults["language"])
@@ -224,10 +216,10 @@ def _settings_from_config(bot) -> SMHISettings:
     )
 
 
-def _fetch_forecast_for_city(
+def _fetch_forecast_for_city_sync(
     city: str, settings: SMHISettings, timeout: int
 ) -> Tuple[Optional[SMHIForecast], Optional[str]]:
-    coords = _get_coordinates(city, settings, timeout)
+    coords = _get_coordinates_sync(city, settings, timeout)
     if not coords:
         message = {
             "sv-SE": f"Hittade inga koordinater för {city}.",
@@ -236,7 +228,7 @@ def _fetch_forecast_for_city(
         return None, message.get(settings.language, message["en-US"])
 
     lon, lat = coords
-    data = _get_point_forecast(lon, lat, settings, timeout)
+    data = _fetch_point_forecast_sync(lon, lat, settings, timeout)
     if not data:
         message = {
             "sv-SE": f"SMHI saknar prognosdata för {city}.",
@@ -254,10 +246,10 @@ def _fetch_forecast_for_city(
     return forecast, None
 
 
-def _get_coordinates(
+def _get_coordinates_sync(
     city: str, settings: SMHISettings, timeout: int
 ) -> Optional[Tuple[float, float]]:
-    for fetcher in (_get_coordinates_nominatim, _get_coordinates_geocodemaps):
+    for fetcher in (_fetch_coordinates_nominatim_sync, _fetch_coordinates_geocodemaps_sync):
         try:
             coords = fetcher(city, settings, timeout)
             if coords:
@@ -267,7 +259,7 @@ def _get_coordinates(
     return None
 
 
-def _get_coordinates_nominatim(
+def _fetch_coordinates_nominatim_sync(
     city: str, settings: SMHISettings, timeout: int
 ) -> Optional[Tuple[float, float]]:
     url = "https://nominatim.openstreetmap.org/search"
@@ -282,7 +274,7 @@ def _get_coordinates_nominatim(
     return float(entry["lon"]), float(entry["lat"])
 
 
-def _get_coordinates_geocodemaps(
+def _fetch_coordinates_geocodemaps_sync(
     city: str, settings: SMHISettings, timeout: int
 ) -> Optional[Tuple[float, float]]:
     url = "https://geocode.maps.co/search"
@@ -296,7 +288,7 @@ def _get_coordinates_geocodemaps(
     return float(entry["lon"]), float(entry["lat"])
 
 
-def _get_point_forecast(
+def _fetch_point_forecast_sync(
     longitude: float, latitude: float, settings: SMHISettings, timeout: int
 ) -> Optional[Dict[str, Any]]:
     base = "https://opendata-download-metfcst.smhi.se/api"

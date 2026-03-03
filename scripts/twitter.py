@@ -75,11 +75,9 @@ def _iter_urls(message: str) -> Iterable[str]:
 async def _handle_twitter_url(
     bot, channel: str, url: str, settings: TwitterSettings
 ) -> None:
-    loop = asyncio.get_running_loop()
+    from core.utils import run_blocking
     try:
-        reply = await loop.run_in_executor(
-            None, lambda: _fetch_and_format(url, settings, timeout=bot.request_timeout)
-        )
+        reply = await run_blocking(_fetch_and_format_sync, url, settings, timeout=bot.request_timeout)
     except requests.RequestException:
         logger.warning("Twitter request error for %s", url, exc_info=True)
         return
@@ -92,13 +90,8 @@ async def _handle_twitter_url(
 
 
 def _settings_from_config(bot) -> TwitterSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section: Dict[str, object] = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("twitter")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "twitter")
 
     defaults = TwitterSettings()
     enabled = bool(section.get("enabled", defaults.enabled))
@@ -133,7 +126,7 @@ def _settings_from_config(bot) -> TwitterSettings:
     )
 
 
-def _fetch_and_format(url: str, settings: TwitterSettings, timeout: int) -> Optional[str]:
+def _fetch_and_format_sync(url: str, settings: TwitterSettings, timeout: int) -> Optional[str]:
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
     request_timeout = max(1, min(settings.timeout, timeout or settings.timeout))
     resp = requests.get(

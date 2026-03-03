@@ -309,16 +309,8 @@ def _format_delta(delta: timedelta) -> str:
 
 
 def _settings_from_config(bot) -> ReminderSettings:
-    config = getattr(bot, "config", {})
-    plugins = config.get("plugins", {})
-    
-    # Safe access
-    if not isinstance(plugins, dict):
-        plugins = {}
-    
-    settings = plugins.get("remindme", {})
-    if not isinstance(settings, dict):
-        settings = {}
+    from core.utils import get_plugin_config
+    settings = get_plugin_config(bot, "remindme")
         
     default_path = Path(__file__).resolve().parent / DEFAULT_STORAGE_NAME
     raw_path = settings.get("storage_path")

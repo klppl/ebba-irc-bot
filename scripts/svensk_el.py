@@ -77,13 +77,8 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
 
 
 def _settings_from_config(bot) -> SvenskElSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section = {}
-    if isinstance(plugins_section, dict):
-        candidate = plugins_section.get("svensk_el")
-        if isinstance(candidate, dict):
-            section = candidate
+    from core.utils import get_plugin_config
+    get_plugin_config(bot, "svensk_el")  # validate config exists
 
     default_triggers = CONFIG_DEFAULTS["plugins"]["svensk_el"]["triggers"]
     # Triggers are script-defined; ignore config overrides

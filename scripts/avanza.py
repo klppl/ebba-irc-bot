@@ -85,19 +85,17 @@ async def _handle_avanza(bot, channel: str, query: str) -> None:
 
 
 async def _fetch_quote_text(query: str, timeout: int) -> str:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, lambda: _blocking_fetch_quote_text(query, timeout)
-    )
+    from core.utils import run_blocking
+    return await run_blocking(_fetch_quote_text_sync, query, timeout)
 
 
-def _blocking_fetch_quote_text(query: str, timeout: int) -> str:
-    ob_id, hit = search_stock(query, timeout)
+def _fetch_quote_text_sync(query: str, timeout: int) -> str:
+    ob_id, hit = _search_stock_sync(query, timeout)
     if not ob_id:
         return "No order book id found; cannot fetch chart."
 
     try:
-        payload = fetch_chart_data(ob_id, timeout)
+        payload = _fetch_chart_data_sync(ob_id, timeout)
     except ValueError:
         return "Non-JSON response"
     latest = latest_close_from_chart(payload)
@@ -120,7 +118,7 @@ def latest_close_from_chart(payload: Dict[str, Any]) -> Optional[float]:
         return None
 
 
-def fetch_chart_data(orderbook_id: int, timeout: int) -> Dict[str, Any]:
+def _fetch_chart_data_sync(orderbook_id: int, timeout: int) -> Dict[str, Any]:
     params = {"timePeriod": "today"}
     response = requests.get(
         PRICE_ENDPOINT.format(orderbook_id=orderbook_id),
@@ -134,7 +132,7 @@ def fetch_chart_data(orderbook_id: int, timeout: int) -> Dict[str, Any]:
         raise ValueError("Non-JSON response from Avanza chart API")
 
 
-def search_stock(query: str, timeout: int) -> Tuple[Optional[int], Dict[str, Any]]:
+def _search_stock_sync(query: str, timeout: int) -> Tuple[Optional[int], Dict[str, Any]]:
     options = {
         "query": query,
         "searchFilter": {"types": ["STOCK"]},
@@ -172,14 +170,6 @@ def search_stock(query: str, timeout: int) -> Tuple[Optional[int], Dict[str, Any
 
 
 def _settings_from_config(bot) -> AvanzaSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    if not isinstance(plugins_section, dict):
-        return AvanzaSettings()
-
-    section = plugins_section.get("avanza")
-    if isinstance(section, dict):
-        # Reserved for future settings; triggers remain script-defined
-        _ = section
-
+    from core.utils import get_plugin_config
+    get_plugin_config(bot, "avanza")  # reserved for future settings
     return AvanzaSettings()

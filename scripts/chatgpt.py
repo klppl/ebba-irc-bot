@@ -120,14 +120,20 @@ def on_unload(bot) -> None:
     logger.info("ChatGPT plugin unloaded")
 
 
+_address_pattern_cache: tuple = ("", None)  # (nickname, compiled_pattern)
+
+
 def on_message(bot, user: str, channel: str, message: str) -> None:
-    global state
+    global state, _address_pattern_cache
     if state is None or not state.settings.enabled:
         return
 
-    # Only react when bot is addressed
-    pattern = re.compile(rf"^{re.escape(bot.nickname)}(\s+|[:,]\s+)(.*)", re.IGNORECASE)
-    match = pattern.match(message.strip())
+    # Only react when bot is addressed (cached regex)
+    cached_nick, cached_re = _address_pattern_cache
+    if cached_nick != bot.nickname:
+        cached_re = re.compile(rf"^{re.escape(bot.nickname)}(\s+|[:,]\s+)(.*)", re.IGNORECASE)
+        _address_pattern_cache = (bot.nickname, cached_re)
+    match = cached_re.match(message.strip())
     if not match:
         return
 
@@ -212,15 +218,8 @@ async def _call_openai(messages: List[Dict[str, str]], settings: ChatGPTSettings
     if client is None:
         raise RuntimeError("OpenAI client unavailable")
 
-    loop = asyncio.get_running_loop()
-
-    def _request():
-        return client.chat.completions.create(
-            model=settings.model,
-            messages=messages,
-        )
-
-    response = await loop.run_in_executor(None, _request)
+    from core.utils import run_blocking
+    response = await run_blocking(client.chat.completions.create, model=settings.model, messages=messages)
     choices = getattr(response, "choices", None)
     if not choices:
         return ""
@@ -274,13 +273,8 @@ async def _reset_history(bot, channel: str) -> None:
 
 
 def _settings_from_config(bot) -> ChatGPTSettings:
-    config = getattr(bot, "config", {})
-    plugins_section = config.get("plugins") if isinstance(config, dict) else {}
-    section = {}
-    if isinstance(plugins_section, dict):
-        section = plugins_section.get("chatgpt", {})
-    if not isinstance(section, dict):
-        section = {}
+    from core.utils import get_plugin_config
+    section = get_plugin_config(bot, "chatgpt")
 
     api_key = section.get("api_key")
     model = section.get("model", DEFAULT_MODEL)

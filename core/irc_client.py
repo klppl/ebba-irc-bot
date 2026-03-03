@@ -70,6 +70,7 @@ class IRCClient:
         self.username = str(config["username"])
         self.realname = str(config["realname"])
         self.channels = list(config.get("channels", []))
+        self._channels_lower: Set[str] = {ch.lower() for ch in self.channels if isinstance(ch, str)}
         self.prefix = str(config.get("prefix", "."))
         self._owner_records = self._load_owner_records(config)
         self.owner_nicks = {record.nick for record in self._owner_records.values()}
@@ -288,6 +289,7 @@ class IRCClient:
         channels = self.config.get("channels")
         if isinstance(channels, list):
             self.channels = list(channels)
+            self._channels_lower = {ch.lower() for ch in self.channels if isinstance(ch, str)}
 
         # Reset per-target limiters with updated settings
         self._target_rate_limiters.clear()
@@ -436,13 +438,15 @@ class IRCClient:
         if not channel:
             return
 
-        # Update in-memory list (case-insensitive dedupe).
-        if not any(existing.lower() == channel.lower() for existing in self.channels):
+        # Update in-memory list (O(1) case-insensitive dedupe).
+        lowered = channel.lower()
+        if lowered not in self._channels_lower:
             self.channels.append(channel)
+            self._channels_lower.add(lowered)
 
         channels_list = self.config.setdefault("channels", [])
         if isinstance(channels_list, list):
-            if not any(existing.lower() == channel.lower() for existing in channels_list):
+            if not any(existing.lower() == lowered for existing in channels_list):
                 channels_list.append(channel)
         else:
             self.config["channels"] = [channel]
@@ -460,6 +464,7 @@ class IRCClient:
             for existing in self.channels
             if isinstance(existing, str) and existing.lower() != target_lower
         ]
+        self._channels_lower.discard(target_lower)
 
         channels_list = self.config.get("channels")
         if isinstance(channels_list, list):
@@ -495,29 +500,39 @@ class IRCClient:
         self.channels = list(normalized_channels)
         self.config["channels"] = list(normalized_channels)
 
-        lock_path = config_path.with_suffix(config_path.suffix + ".lock")
-        with file_lock(lock_path):
-            data = load_yaml_file(config_path)
+        # Snapshot for the background write
+        channels_snapshot = list(normalized_channels)
 
-            existing_section = data.get("channels")
-            if isinstance(existing_section, list):
-                existing_channels = [
-                    str(item).strip() for item in existing_section if isinstance(item, str)
-                ]
-            else:
-                existing_channels = []
+        def _write() -> None:
+            lock_path = config_path.with_suffix(config_path.suffix + ".lock")
+            with file_lock(lock_path):
+                data = load_yaml_file(config_path)
 
-            if existing_channels == normalized_channels:
-                return
+                existing_section = data.get("channels")
+                if isinstance(existing_section, list):
+                    existing_channels = [
+                        str(item).strip() for item in existing_section if isinstance(item, str)
+                    ]
+                else:
+                    existing_channels = []
 
-            data["channels"] = normalized_channels
+                if existing_channels == channels_snapshot:
+                    return
 
-            try:
-                atomic_write_yaml(config_path, data)
-            except Exception:
-                self.logger.warning(
-                    "Failed to write updated channels to config", exc_info=True
-                )
+                data["channels"] = channels_snapshot
+
+                try:
+                    atomic_write_yaml(config_path, data)
+                except Exception:
+                    self.logger.warning(
+                        "Failed to write updated channels to config", exc_info=True
+                    )
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _write)
+        except RuntimeError:
+            _write()
 
     def _load_owner_records(self, config: Dict[str, Any]) -> Dict[str, OwnerRecord]:
         raw_entries = config.get("owner_nicks", []) or []
@@ -593,17 +608,27 @@ class IRCClient:
         self.config["owner_nicks"] = serialized
         self.owner_nicks = {record.nick for record in self._owner_records.values()}
 
-        lock_path = config_path.with_suffix(config_path.suffix + ".lock")
-        with file_lock(lock_path):
-            data = load_yaml_file(config_path)
-            data["owner_nicks"] = serialized
+        # Snapshot for the background write
+        serialized_snapshot = list(serialized)
 
-            try:
-                atomic_write_yaml(config_path, data)
-            except Exception:
-                self.logger.warning(
-                    "Failed to write updated owner records to config", exc_info=True
-                )
+        def _write() -> None:
+            lock_path = config_path.with_suffix(config_path.suffix + ".lock")
+            with file_lock(lock_path):
+                data = load_yaml_file(config_path)
+                data["owner_nicks"] = serialized_snapshot
+
+                try:
+                    atomic_write_yaml(config_path, data)
+                except Exception:
+                    self.logger.warning(
+                        "Failed to write updated owner records to config", exc_info=True
+                    )
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _write)
+        except RuntimeError:
+            _write()
 
     def _extract_owner_identity(self, prefix: str) -> tuple[Optional[str], Optional[str]]:
         if "!" not in prefix:
@@ -676,123 +701,134 @@ class IRCClient:
         reply_target = nick if is_private else channel
 
         if command == "auth":
-            if not is_private:
-                await self.privmsg(
-                    reply_target, "Authentication must be sent in a private message."
-                )
-                return
-            if not args:
-                await self.privmsg(nick, f"Usage: {self.prefix}auth <password>")
-                return
-            password = " ".join(args)
-            if not prefix:
-                await self.privmsg(nick, "Authentication failed (missing prefix).")
-                return
-            if self._authenticate_owner(prefix, password):
-                nick_check, ident_host_check = self._extract_owner_identity(prefix)
-                await self.privmsg(
-                    nick,
-                    f"Authentication successful. Your ident_host: {ident_host_check}",
-                )
-            else:
-                await self.privmsg(nick, "Authentication failed.")
+            await self._cmd_auth(nick, prefix, reply_target, args, is_private)
             return
-
         if command == "whoami":
-            if not prefix:
-                await self.privmsg(reply_target, "Unable to determine your identity.")
-                return
-            nick_check, ident_host_check = self._extract_owner_identity(prefix)
-            record = self._owner_records.get(nick_check.lower() if nick_check else "")
-            if record:
-                hosts_list = ", ".join(sorted(record.hosts)) if record.hosts else "none"
-                has_access = self._has_owner_access(prefix)
-                await self.privmsg(
-                    reply_target,
-                    f"Nick: {nick_check} | Ident_host: {ident_host_check} | "
-                    f"Stored hosts: {hosts_list} | Has access: {has_access}",
-                )
-            else:
-                await self.privmsg(
-                    reply_target,
-                    f"Nick: {nick_check} | Ident_host: {ident_host_check} | No owner record",
-                )
+            await self._cmd_whoami(prefix, reply_target)
             return
-
         if command == "plugins":
-            enabled, disabled = self.plugin_manager.list_plugin_status()
-            enabled_str = ", ".join(enabled) if enabled else "none"
-            disabled_str = ", ".join(disabled) if disabled else "none"
-            message = f"Enabled plugins: {enabled_str} | Disabled plugins: {disabled_str}"
-            await self.privmsg(reply_target, message)
+            await self._cmd_plugins(reply_target)
             return
-
         if command in {"load", "unload", "reload"}:
-            if not args:
-                await self.privmsg(reply_target, f"Usage: {self.prefix}{command} <plugin>")
-                return
-            plugin_name = args[0]
-            try:
-                if command == "load":
-                    self.plugin_manager.load(plugin_name, self, refresh_config=True)
-                elif command == "unload":
-                    self.plugin_manager.unload(plugin_name, self)
-                else:
-                    self.plugin_manager.reload(plugin_name, self)
-            except Exception as exc:
-                self.logger.exception("Error handling %s command", command)
-                await self.privmsg(reply_target, f"{command.title()} failed: {exc}")
-            else:
-                status_text = "enabled" if command == "load" else "disabled"
-                if command == "reload":
-                    status_text = "reloaded"
-                await self.privmsg(
-                    reply_target, f"{command.title()}ed plugin '{plugin_name}' ({status_text})."
-                )
+            await self._cmd_load(command, reply_target, args)
             return
-
         if command in {"say", "join", "part"}:
-            if not self._has_owner_access(prefix):
-                await self.privmsg(reply_target, "You do not have permission for that command.")
-                return
-
-            if command == "say":
-                if len(args) < 2:
-                    await self.privmsg(reply_target, f"Usage: {self.prefix}say <target> <text>")
-                    return
-                target = args[0]
-                text_to_send = " ".join(args[1:])
-                await self.privmsg(target, text_to_send)
-                await self.privmsg(reply_target, "Message sent.")
-            elif command == "join":
-                if not args:
-                    await self.privmsg(reply_target, f"Usage: {self.prefix}join <#channel>")
-                    return
-                target_channel = args[0]
-                await self.join(target_channel)
-                self._remember_channel(target_channel)
-                await self.privmsg(reply_target, f"Joining {target_channel}")
-            elif command == "part":
-                if not args:
-                    await self.privmsg(reply_target, f"Usage: {self.prefix}part <#channel>")
-                    return
-                target_channel = args[0]
-                reason = " ".join(args[1:]) if len(args) > 1 else ""
-                await self.part(target_channel, reason)
-                self._forget_channel(target_channel)
-                await self.privmsg(reply_target, f"Parting {target_channel}")
+            await self._cmd_say_join_part(command, prefix, reply_target, args)
+            return
         if command in {"health", "status"}:
             await self._handle_status(reply_target)
             return
-
         if command == "help":
             await self._handle_help(reply_target, args)
             return
 
         # Dispatch to registered plugin commands (need full prefix for owner checks)
         if prefix:
-            handled = self.plugin_manager.dispatch_registered_command(
+            self.plugin_manager.dispatch_registered_command(
                 self, prefix, channel, command, args, is_private
             )
-            if handled:
+
+    async def _cmd_auth(
+        self, nick: str, prefix: Optional[str], reply_target: str, args: List[str], is_private: bool
+    ) -> None:
+        if not is_private:
+            await self.privmsg(reply_target, "Authentication must be sent in a private message.")
+            return
+        if not args:
+            await self.privmsg(nick, f"Usage: {self.prefix}auth <password>")
+            return
+        password = " ".join(args)
+        if not prefix:
+            await self.privmsg(nick, "Authentication failed (missing prefix).")
+            return
+        if self._authenticate_owner(prefix, password):
+            nick_check, ident_host_check = self._extract_owner_identity(prefix)
+            await self.privmsg(
+                nick,
+                f"Authentication successful. Your ident_host: {ident_host_check}",
+            )
+        else:
+            await self.privmsg(nick, "Authentication failed.")
+
+    async def _cmd_whoami(self, prefix: Optional[str], reply_target: str) -> None:
+        if not prefix:
+            await self.privmsg(reply_target, "Unable to determine your identity.")
+            return
+        nick_check, ident_host_check = self._extract_owner_identity(prefix)
+        record = self._owner_records.get(nick_check.lower() if nick_check else "")
+        if record:
+            hosts_list = ", ".join(sorted(record.hosts)) if record.hosts else "none"
+            has_access = self._has_owner_access(prefix)
+            await self.privmsg(
+                reply_target,
+                f"Nick: {nick_check} | Ident_host: {ident_host_check} | "
+                f"Stored hosts: {hosts_list} | Has access: {has_access}",
+            )
+        else:
+            await self.privmsg(
+                reply_target,
+                f"Nick: {nick_check} | Ident_host: {ident_host_check} | No owner record",
+            )
+
+    async def _cmd_plugins(self, reply_target: str) -> None:
+        enabled, disabled = self.plugin_manager.list_plugin_status()
+        enabled_str = ", ".join(enabled) if enabled else "none"
+        disabled_str = ", ".join(disabled) if disabled else "none"
+        message = f"Enabled plugins: {enabled_str} | Disabled plugins: {disabled_str}"
+        await self.privmsg(reply_target, message)
+
+    async def _cmd_load(self, command: str, reply_target: str, args: List[str]) -> None:
+        if not args:
+            await self.privmsg(reply_target, f"Usage: {self.prefix}{command} <plugin>")
+            return
+        plugin_name = args[0]
+        try:
+            if command == "load":
+                self.plugin_manager.load(plugin_name, self, refresh_config=True)
+            elif command == "unload":
+                self.plugin_manager.unload(plugin_name, self)
+            else:
+                self.plugin_manager.reload(plugin_name, self)
+        except Exception as exc:
+            self.logger.exception("Error handling %s command", command)
+            await self.privmsg(reply_target, f"{command.title()} failed: {exc}")
+        else:
+            status_text = "enabled" if command == "load" else "disabled"
+            if command == "reload":
+                status_text = "reloaded"
+            await self.privmsg(
+                reply_target, f"{command.title()}ed plugin '{plugin_name}' ({status_text})."
+            )
+
+    async def _cmd_say_join_part(
+        self, command: str, prefix: Optional[str], reply_target: str, args: List[str]
+    ) -> None:
+        if not self._has_owner_access(prefix):
+            await self.privmsg(reply_target, "You do not have permission for that command.")
+            return
+
+        if command == "say":
+            if len(args) < 2:
+                await self.privmsg(reply_target, f"Usage: {self.prefix}say <target> <text>")
                 return
+            target = args[0]
+            text_to_send = " ".join(args[1:])
+            await self.privmsg(target, text_to_send)
+            await self.privmsg(reply_target, "Message sent.")
+        elif command == "join":
+            if not args:
+                await self.privmsg(reply_target, f"Usage: {self.prefix}join <#channel>")
+                return
+            target_channel = args[0]
+            await self.join(target_channel)
+            self._remember_channel(target_channel)
+            await self.privmsg(reply_target, f"Joining {target_channel}")
+        elif command == "part":
+            if not args:
+                await self.privmsg(reply_target, f"Usage: {self.prefix}part <#channel>")
+                return
+            target_channel = args[0]
+            reason = " ".join(args[1:]) if len(args) > 1 else ""
+            await self.part(target_channel, reason)
+            self._forget_channel(target_channel)
+            await self.privmsg(reply_target, f"Parting {target_channel}")
