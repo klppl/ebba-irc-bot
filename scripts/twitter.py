@@ -135,7 +135,9 @@ def _fetch_and_format_sync(url: str, settings: TwitterSettings, timeout: int) ->
         headers=headers,
         timeout=request_timeout,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.warning("Twitter oEmbed HTTP %s for %s", resp.status_code, url)
+        return None
 
     data = resp.json()
     html = data.get("html")
