@@ -166,14 +166,13 @@ async def _handle_seen_query(bot, channel: str, target: str) -> None:
     assert state is not None
     nick_key = target.lower()
 
-    # Check if we have any entries for this nick
+    # Check if we have an entry for this nick in the current channel
     nick_entries = state.entries.get(nick_key, {})
-    if not nick_entries:
+    channel_key = channel.lower() if channel else "_global"
+    best_entry = nick_entries.get(channel_key)
+    if not best_entry:
         await bot.privmsg(channel, f"I have not seen {target} around.")
         return
-
-    # Find the most recent entry across all channels
-    best_entry = max(nick_entries.values(), key=lambda e: e.timestamp)
 
     now = time.time()
     delta = max(0, now - best_entry.timestamp)
