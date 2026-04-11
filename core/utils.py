@@ -40,7 +40,9 @@ def parse_irc_message(line: str) -> IRCMessage:
     rest = line.strip("\r\n")
 
     if rest.startswith(":"):
-        prefix, rest = rest[1:].split(" ", 1)
+        parts = rest[1:].split(" ", 1)
+        prefix = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
 
     if " :" in rest:
         rest, trailing = rest.split(" :", 1)
