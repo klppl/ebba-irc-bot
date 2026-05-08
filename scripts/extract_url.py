@@ -174,21 +174,6 @@ async def _handle_extract(bot, channel: str, url: str, settings: ExtractSettings
     from core.utils import run_blocking
     try:
         reply = await run_blocking(_fetch_and_format_sync, url, settings, timeout=bot.request_timeout)
-    except requests.Timeout as exc:
-        logger.warning("Metadata fetch timed out for %s (%s)", url, exc)
-        return
-    except requests.HTTPError as exc:
-        response = getattr(exc, "response", None)
-        status = getattr(response, "status_code", "unknown")
-        reason = getattr(response, "reason", "")
-        if reason:
-            logger.warning("Metadata fetch HTTP %s %s for %s", status, reason, url)
-        else:
-            logger.warning("Metadata fetch HTTP %s for %s", status, url)
-        return
-    except requests.RequestException as exc:
-        logger.warning("Metadata fetch request error for %s: %s", url, exc)
-        return
     except Exception:
         logger.exception("Metadata lookup failed for %s", url)
         return
@@ -380,13 +365,21 @@ def _fetch_html_with_limits_sync(
 ) -> tuple[Optional[str], Optional[str]]:
     current_url = url
     for _ in range(MAX_REDIRECTS + 1):
-        response = session.get(
-            current_url,
-            headers=headers,
-            timeout=(connect_timeout, request_timeout),
-            allow_redirects=False,
-            stream=True,
-        )
+        try:
+            response = session.get(
+                current_url,
+                headers=headers,
+                timeout=(connect_timeout, request_timeout),
+                allow_redirects=False,
+                stream=True,
+            )
+        except requests.RequestException as exc:
+            logger.debug("Extract URL request failed for %s: %s", current_url, exc)
+            return None, None
+        except Exception:
+            logger.exception("Extract URL unexpected error for %s", current_url)
+            return None, None
+
         if response.is_redirect or response.is_permanent_redirect:
             location = response.headers.get("Location")
             response.close()
@@ -404,7 +397,21 @@ def _fetch_html_with_limits_sync(
             current_url = next_url
             continue
 
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", "?")
+            logger.debug("Extract URL HTTP %s for %s", status, current_url)
+            response.close()
+            return None, None
+        except requests.RequestException as exc:
+            logger.debug("Extract URL request error for %s: %s", current_url, exc)
+            response.close()
+            return None, None
+        except Exception:
+            logger.exception("Extract URL unexpected error for %s", current_url)
+            response.close()
+            return None, None
 
         content_type = (response.headers.get("Content-Type") or "").lower()
         if "text/html" not in content_type:

@@ -86,9 +86,6 @@ async def _handle_reddit_url(bot, channel: str, url: str, settings: RedditSettin
     from core.utils import run_blocking
     try:
         reply = await run_blocking(_fetch_and_format_sync, url, settings, timeout=bot.request_timeout)
-    except requests.RequestException:
-        logger.warning("Reddit request error for %s", url, exc_info=True)
-        return
     except Exception:
         logger.exception("Reddit lookup failed for %s", url)
         return
@@ -157,12 +154,20 @@ def _fetch_and_format_sync(url: str, settings: RedditSettings, timeout: int) -> 
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
 
     request_timeout = max(1, min(settings.timeout, timeout or settings.timeout))
-    response = requests.get(api_url, headers=headers, timeout=request_timeout)
-    response.raise_for_status()
+    try:
+        response = requests.get(api_url, headers=headers, timeout=request_timeout)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.debug("Reddit request failed for %s: %s", api_url, exc)
+        return None
+    except Exception:
+        logger.exception("Reddit request unexpected error for %s", api_url)
+        return None
     try:
         payload = response.json()
     except ValueError as exc:
-        raise requests.RequestException(f"Invalid JSON from Reddit for {api_url}") from exc
+        logger.debug("Invalid JSON from Reddit for %s: %s", api_url, exc)
+        return None
     link_type, data, extract = _extract_payload(link_type, payload, settings.max_chars)
     if data is None:
         return None

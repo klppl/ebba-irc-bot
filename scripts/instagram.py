@@ -91,9 +91,6 @@ async def _handle_instagram_url(
     from core.utils import run_blocking
     try:
         reply = await run_blocking(_fetch_and_format_sync, url, settings, timeout=bot.request_timeout)
-    except requests.RequestException:
-        logger.warning("Instagram request error for %s", url, exc_info=True)
-        return
     except Exception:
         logger.exception("Instagram lookup failed for %s", url)
         return
@@ -170,8 +167,15 @@ def _fetch_instagram_data_sync(
     }
 
     request_timeout = max(1, min(settings.timeout, timeout or settings.timeout))
-    response = requests.get(embed_url, headers=headers, timeout=request_timeout)
-    response.raise_for_status()
+    try:
+        response = requests.get(embed_url, headers=headers, timeout=request_timeout)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.debug("Instagram request failed for %s: %s", embed_url, exc)
+        return None
+    except Exception:
+        logger.exception("Instagram request unexpected error for %s", embed_url)
+        return None
 
     return _parse_embed_html(response.text)
 
