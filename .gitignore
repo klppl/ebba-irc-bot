@@ -80,3 +80,4 @@ scripts/*.json
 *.json
 scripts/seen_users.json
 *.json
+todo/ai-grok.py
