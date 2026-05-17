@@ -1,0 +1,24 @@
+{
+    "_comment": "Per-channel config for the AI plugin. Keys are channel names (case-insensitive).",
+    "_comment2": "Values can be a plain string (just the prompt) or an object with 'prompt', 'always_search', and 'language'.",
+    "_comment3": "'always_search' only takes effect when provider=grok — DeepSeek and OpenAI have no built-in web search.",
+    "_comment4": "'language' is 'en' or 'sv'; it overrides the global setting for this channel (regexes, error strings, default prompt).",
+    "_comment5": "Delete the _comment keys — they're just documentation. JSON has no comments.",
+
+    "#chill": "You are a laid-back AI regular in this IRC channel. Keep it mellow and casual.",
+
+    "#tech": {
+        "prompt": "You are a knowledgeable AI in a tech channel. Be precise and technical.",
+        "always_search": true
+    },
+
+    "#gaming": {
+        "prompt": "You are a gaming-savvy AI. Reference games and memes naturally.",
+        "always_search": false
+    },
+
+    "#svenska": {
+        "prompt": "Du är en AI-stamgäst i den här IRC-kanalen. Var avslappnad och prata på svenska.",
+        "language": "sv"
+    }
+}

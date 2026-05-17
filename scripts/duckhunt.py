@@ -316,14 +316,14 @@ async def _bang(bot, nick: str, channel: str):
     if nick in hunt.reloading and (now - hunt.reloading[nick] < state.settings.reloadTime):
         if hunt.reloadcount.get(nick, 0) < 1:
             hunt.reloadcount[nick] = hunt.reloadcount.get(nick, 0) + 1
-            await bot.privmsg(channel, f"⏳ ▄︻デ══━一 You are reloading... (Reloading takes {state.settings.reloadTime} seconds)")
+            await bot.privmsg(channel, f"⏳ Reloading... ({state.settings.reloadTime}s)")
             return
         else:
             # Shot self while reloading
             hunt.scores[nick] = hunt.scores.get(nick, 0) - 1
-            msg = f"❌ You shot yourself while trying to reload! ▄︻デ══━一💥 {nick}: {hunt.scores[nick]}"
+            msg = f"❌ Shot yourself! {nick}: {hunt.scores[nick]}"
             if bangdelay:
-                msg += f" ({bangdelay:.2f} seconds)"
+                msg += f" ({bangdelay:.2f}s)"
             await bot.privmsg(channel, msg)
             return
             
@@ -334,7 +334,7 @@ async def _bang(bot, nick: str, channel: str):
     if hunt.duck:
         if random.random() < state.settings.missProbability:
             hunt.streaks[nick] = 0
-            await bot.privmsg(channel, "❌ You missed the duck! ❌")
+            await bot.privmsg(channel, "❌ Missed!")
         else:
             points = 1
             is_golden = (hunt.ducktype == "golden")
@@ -359,9 +359,9 @@ async def _bang(bot, nick: str, channel: str):
             _save_data()
             
             if is_golden:
-                await bot.privmsg(channel, f"🌟 GOLDEN DUCK! {nick} claims it for {points} points! 🌟")
+                await bot.privmsg(channel, f"🌟 GOLDEN! {nick} +{points}")
             else:
-                await bot.privmsg(channel, f"🦆✔️ | Score: {hunt.scores[nick]} ({bangdelay:.2f} seconds )")
+                await bot.privmsg(channel, f"🦆✔️ {nick}: {hunt.scores[nick]} ({bangdelay:.2f}s)")
                 
             # Times
             if bangdelay is not None:
@@ -385,9 +385,9 @@ async def _bang(bot, nick: str, channel: str):
                 leader_nick = max(hunt.scores.items(), key=itemgetter(1))[0]
                 if leader_nick != hunt.huntLeader:
                     if hunt.huntLeader:
-                        await bot.privmsg(channel, f"{leader_nick} took the lead for this hunt over {hunt.huntLeader} with {hunt.scores[leader_nick]} points. 🏆")
+                        await bot.privmsg(channel, f"🏆 {leader_nick} takes lead! ({hunt.scores[leader_nick]}pts)")
                     else:
-                        await bot.privmsg(channel, f"{leader_nick} has the lead for this hunt with {hunt.scores[leader_nick]} points. 🏆")
+                        await bot.privmsg(channel, f"🏆 {leader_nick} leads! ({hunt.scores[leader_nick]}pts)")
                     hunt.huntLeader = leader_nick
                     
             if hunt.shoots >= state.settings.ducks:
@@ -403,9 +403,9 @@ async def _bang(bot, nick: str, channel: str):
         cd.channelscores[nick] = cd.channelscores.get(nick, 0) - 1
         _save_data()
         
-        msg = f"❌ There was no duck! ❌ {nick}: {hunt.scores[nick]}"
+        msg = f"❌ No duck! {nick}: {hunt.scores[nick]}"
         if bangdelay is not None:
-             msg += f" ({bangdelay:.2f} seconds)"
+             msg += f" ({bangdelay:.2f}s)"
         await bot.privmsg(channel, msg)
 
 async def _bef(bot, nick: str, channel: str):
@@ -420,13 +420,13 @@ async def _bef(bot, nick: str, channel: str):
             cd = _get_channel_data(channel)
             cd.channelfriends[nick] = cd.channelfriends.get(nick, 0) + 1
             _save_data()
-            await bot.privmsg(channel, f"🦆❤️ {nick}, you gently befriended the duck! (+1 friendship point)")
+            await bot.privmsg(channel, f"🦆❤️ {nick} +1 friend")
         else:
             hunt.friends[nick] = hunt.friends.get(nick, 0) - 1
             cd = _get_channel_data(channel)
             cd.channelfriends[nick] = cd.channelfriends.get(nick, 0) - 1
             _save_data()
-            await bot.privmsg(channel, f"💨 {nick}, the duck got scared and flew away! (-1 friendship point)")
+            await bot.privmsg(channel, f"💨 {nick} duck flew away! -1")
             
         hunt.duck = False
         hunt.last_spawn = time.time()
@@ -435,7 +435,7 @@ async def _bef(bot, nick: str, channel: str):
         cd = _get_channel_data(channel)
         cd.channelfriends[nick] = cd.channelfriends.get(nick, 0) - 1
         _save_data()
-        await bot.privmsg(channel, f"😅 {nick}, there's no duck to befriend right now! (-1 friendship point)")
+        await bot.privmsg(channel, f"😅 {nick} no duck! -1 friend")
 
 async def _end(bot, channel: str, auto_restart: bool):
     hunt = state.hunts.get(channel)
@@ -445,50 +445,51 @@ async def _end(bot, channel: str, auto_restart: bool):
     hunt.started = False
     cd = _get_channel_data(channel)
     
-    if not auto_restart:
-        await bot.privmsg(channel, "❗ The hunt stops now! ❗")
-        
     if hunt.scores:
         winnernick = max(hunt.scores.items(), key=itemgetter(1))[0]
         winnerscore = hunt.scores[winnernick]
         
         if winnerscore == state.settings.ducks:
-            await bot.privmsg(channel, f"😮 {winnernick}: {winnerscore} ducks out of {state.settings.ducks}: perfect!!! +{state.settings.perfectbonus} 😮")
             hunt.scores[winnernick] += state.settings.perfectbonus
             cd.channelscores[winnernick] = cd.channelscores.get(winnernick, 0) + state.settings.perfectbonus
             _save_data()
+            await bot.privmsg(channel, f"😮 Perfect! {winnernick}: {winnerscore}/{state.settings.ducks} +{state.settings.perfectbonus} 😮")
         else:
-            reply = [f"({n}: {s})" for n, s in sorted(hunt.scores.items(), key=itemgetter(1), reverse=True)]
-            await bot.privmsg(channel, f"Scores: {' '.join(reply)}")
+            reply = " ".join([f"({n}: {s})" for n, s in sorted(hunt.scores.items(), key=itemgetter(1), reverse=True)])
+            if auto_restart:
+                await bot.privmsg(channel, f"🦆 {' '.join(reply)}")
+            else:
+                await bot.privmsg(channel, f"❗ Hunt over! {' '.join(reply)}")
             
+        time_parts = []
         if hunt.toptimes:
             key, val = min(hunt.toptimes.items(), key=itemgetter(1))
-            recordmsg = ""
+            record = ""
             if key in cd.channeltimes and val <= cd.channeltimes[key]:
-                # Find if they are the absolute best
                 overall_best = min(cd.channeltimes.values())
                 if val <= overall_best:
-                    recordmsg = ". 🏆 This is the new record for this channel!"
-            await bot.privmsg(channel, f"🕒 Best time: {key} with {val:.2f} seconds{recordmsg}")
-            
+                    record = " 🏆rec!"
+            time_parts.append(f"Best: {key} {val:.2f}s{record}")
         if hunt.worsttimes:
             key, val = max(hunt.worsttimes.items(), key=itemgetter(1))
-            recordmsg = ""
+            record = ""
             if key in cd.channelworsttimes and val >= cd.channelworsttimes[key]:
                 overall_worst = max(cd.channelworsttimes.values())
                 if val >= overall_worst:
-                    recordmsg = ". 🕒 This is the new longest time for this channel!"
-            if recordmsg:
-                await bot.privmsg(channel, f"🕒 Longest time: {key} with {val:.2f} seconds{recordmsg}")
-                
-        # Week handling skipped for brevity/complexity in the simple port, 
-        # could add day/week tracking if requested, but left out of core end summary for now.
+                    record = " slowest!"
+            if record:
+                time_parts.append(f"Slowest: {key} {val:.2f}s{record}")
+        if time_parts:
+            await bot.privmsg(channel, f"🕒 {' · '.join(time_parts)}")
     else:
-        await bot.privmsg(channel, "❗😮 Not a single duck was shot during this hunt!")
+        if not auto_restart:
+            await bot.privmsg(channel, "❗ Hunt over! 😮 Not a single duck was shot!")
+        else:
+            await bot.privmsg(channel, "😮 Not a single duck was shot during this hunt!")
         
     if hunt.friends:
-        reply = [f"({n}: {s})" for n, s in sorted(hunt.friends.items(), key=itemgetter(1), reverse=True)]
-        await bot.privmsg(channel, f"🦆❤️ Friendship scores this hunt: {' '.join(reply)}")
+        reply = " ".join([f"({n}: {s})" for n, s in sorted(hunt.friends.items(), key=itemgetter(1), reverse=True)])
+        await bot.privmsg(channel, f"❤️ {reply}")
         
     if auto_restart:
         asyncio.create_task(_starthunt_delayed(bot, channel, 5))
@@ -518,38 +519,34 @@ async def _total(bot, channel: str):
     cd = _get_channel_data(channel)
     s = sum(cd.channelscores.values())
     b = sum(cd.channelfriends.values())
-    await bot.privmsg(channel, f"{s} 🦆 ducks have been shot in {channel}!")
-    await bot.privmsg(channel, f"{b} 🦆 ducks have been befriended in {channel}!")
+    await bot.privmsg(channel, f"🦆 {s} shot · ❤️ {b} befriended in {channel}")
 
 async def _listscores(bot, size: int, channel: str):
     cd = _get_channel_data(channel)
     if cd.channelscores:
         scores = sorted(cd.channelscores.items(), key=itemgetter(1), reverse=True)[:size]
         reply = " ".join([f"({n}: {s})" for n, s in scores])
-        await bot.privmsg(channel, f"🦆 ~ DuckHunt top-{size} scores 🏆🏆🏆 for {channel} ~ 🦆")
-        await bot.privmsg(channel, reply)
+        await bot.privmsg(channel, f"🏆 Top {size}: {reply}")
     else:
-        await bot.privmsg(channel, "There aren't any scores for this channel yet.")
+        await bot.privmsg(channel, "No scores for this channel yet.")
 
 async def _listtimes(bot, size: int, channel: str):
     cd = _get_channel_data(channel)
     if cd.channeltimes:
         times = sorted(cd.channeltimes.items(), key=itemgetter(1))[:size]
-        reply = " ".join([f"({n}: {s:.2f})" for n, s in times])
-        await bot.privmsg(channel, f"🦆 ~ DuckHunt top-{size} fastest times 🕒 for {channel} ~ 🦆")
-        await bot.privmsg(channel, reply)
+        reply = " ".join([f"({n}: {s:.2f}s)" for n, s in times])
+        await bot.privmsg(channel, f"🕒 Fastest: {reply}")
     else:
-        await bot.privmsg(channel, "There aren't any best times for this channel yet.")
+        await bot.privmsg(channel, "No best times for this channel yet.")
 
 async def _listfriends(bot, size: int, channel: str):
     cd = _get_channel_data(channel)
     if cd.channelfriends:
         friends = sorted(cd.channelfriends.items(), key=itemgetter(1), reverse=True)[:size]
         reply = " ".join([f"({n}: {s})" for n, s in friends])
-        await bot.privmsg(channel, f"🦆❤️ ~ DuckHunt top-{size} duck friends for {channel} ~ 🦆")
-        await bot.privmsg(channel, reply)
+        await bot.privmsg(channel, f"❤️ Top friends: {reply}")
     else:
-        await bot.privmsg(channel, "There aren't any friendship records for this channel yet.")
+        await bot.privmsg(channel, "No friendship records for this channel yet.")
 
 async def _dbg(bot, channel: str):
     # force spawn a duck
