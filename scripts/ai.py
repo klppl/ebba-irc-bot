@@ -161,6 +161,8 @@ class Strings:
     ai_now_disabled: str
     ai_failed: str
     ai_status: str
+    ai_language_set: str
+    ai_language_unknown: str
     status_enabled: str
     status_disabled: str
     status_enabled_caps: str
@@ -230,8 +232,11 @@ _EN_STRINGS = Strings(
     ai_failed="Failed to update AI status.",
     ai_status=(
         "AI is currently {status} for {channel}. "
-        "Use '{prefix}ai on' or '{prefix}ai off' to change it."
+        "Use '{prefix}ai on' or '{prefix}ai off' to change it, "
+        "or '{prefix}ai set en|sv' to set the language."
     ),
+    ai_language_set="AI will now speak {language} in {channel}.",
+    ai_language_unknown="Unknown language '{lang}'. Available: {languages}.",
     status_enabled="enabled",
     status_disabled="disabled",
     status_enabled_caps="ENABLED",
@@ -387,8 +392,11 @@ _SV_STRINGS = Strings(
     ai_failed="Misslyckades med att uppdatera AI-status.",
     ai_status=(
         "AI är just nu {status} för {channel}. "
-        "Använd '{prefix}ai on' eller '{prefix}ai off' för att ändra."
+        "Använd '{prefix}ai on' eller '{prefix}ai off' för att ändra, "
+        "eller '{prefix}ai set en|sv' för att välja språk."
     ),
+    ai_language_set="AI pratar nu {language} i {channel}.",
+    ai_language_unknown="Okänt språk '{lang}'. Tillgängliga: {languages}.",
     status_enabled="aktiverat",
     status_disabled="avaktiverat",
     status_enabled_caps="AKTIVERAT",
@@ -524,6 +532,12 @@ LANGUAGES: Dict[str, LanguageBundle] = {
     "sv": _SV_BUNDLE,
 }
 
+# Accepted spellings for the `.ai set <lang>` command, mapped to a bundle code.
+_LANGUAGE_ALIASES: Dict[str, str] = {
+    "en": "en", "eng": "en", "english": "en", "engelska": "en",
+    "sv": "sv", "se": "sv", "swe": "sv", "swedish": "sv", "svenska": "sv",
+}
+
 
 # ---- Plugin state ---------------------------------------------------------
 
@@ -556,7 +570,7 @@ class AIState:
     busy: Dict[str, bool] = field(default_factory=dict)
     api_failures: Dict[str, int] = field(default_factory=dict)
     citation_cache: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
-    channel_settings_cache: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    channel_settings_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     admin_ignored: set = field(default_factory=set)
     channel_prompts_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     channel_prompts_cache_time: float = 0.0
@@ -619,7 +633,7 @@ def on_load(bot) -> None:
     )
     pm.register_command(
         "ai", "ai", _cmd_ai_toggle,
-        help_text="Enable or disable AI for this channel. Usage: .ai on|off",
+        help_text="Enable/disable AI or set its language for this channel. Usage: .ai on|off | .ai set en|sv",
     )
     pm.register_command(
         "ai", "aiignore", _cmd_ai_ignore,
@@ -1571,6 +1585,24 @@ async def _cmd_ai_toggle(bot, user: str, channel: str, args: List[str], is_priva
         return
 
     arg = (args[0].strip().lower() if args else "")
+    if arg in ("set", "lang", "language"):
+        lang_arg = (args[1].strip().lower() if len(args) > 1 else "")
+        code = _LANGUAGE_ALIASES.get(lang_arg)
+        if not code:
+            await bot.privmsg(channel, s.ai_language_unknown.format(
+                lang=lang_arg or "?", languages=", ".join(sorted(LANGUAGES)),
+            ))
+            return
+        if _db_set_channel_language(channel, code):
+            # Confirm in the newly selected language.
+            new_bundle = LANGUAGES[code]
+            await bot.privmsg(channel, new_bundle.strings.ai_language_set.format(
+                language=new_bundle.name, channel=channel,
+            ))
+        else:
+            await bot.privmsg(channel, s.ai_failed)
+        return
+
     if arg in ("on", "enable", "true", "1"):
         if _db_set_channel_enabled(channel, True):
             await bot.privmsg(channel, s.ai_now_enabled.format(channel=channel))
@@ -1635,15 +1667,18 @@ def _nick_from_prefix(prefix: str) -> str:
 def _resolve_bundle(channel: str, is_pm: bool) -> LanguageBundle:
     """Return the LanguageBundle for this conversation.
 
-    Channel prompts in `ai_channel_prompts.json` may pin a `language` key per
-    channel. PMs and channels without an override fall back to the global
-    `settings.language`.
+    A runtime `.ai set <lang>` choice (stored in the DB) wins. Otherwise a
+    `language` key pinned in `ai_channel_prompts.json` applies. PMs and channels
+    without any override fall back to the global `settings.language`.
     """
     if state is None:
         return _EN_BUNDLE
     default = LANGUAGES.get(state.settings.language, _EN_BUNDLE)
     if is_pm or not channel.startswith("#"):
         return default
+    db_lang = _db_get_channel_language(channel)
+    if db_lang and db_lang in LANGUAGES:
+        return LANGUAGES[db_lang]
     ch_cfg = _load_channel_prompts().get(channel.lower())
     if ch_cfg:
         lang = ch_cfg.get("language")
@@ -1790,9 +1825,14 @@ def _init_db() -> None:
             """CREATE TABLE IF NOT EXISTS ai_channel_settings (
                 channel TEXT PRIMARY KEY,
                 talkback INTEGER DEFAULT 1,
-                enabled INTEGER DEFAULT 1
+                enabled INTEGER DEFAULT 1,
+                language TEXT
             )"""
         )
+        # Migrate older DBs that predate the per-channel language column.
+        existing_cols = {r[1] for r in c.execute("PRAGMA table_info(ai_channel_settings)").fetchall()}
+        if "language" not in existing_cols:
+            c.execute("ALTER TABLE ai_channel_settings ADD COLUMN language TEXT")
         conn.commit()
 
 
@@ -1946,4 +1986,43 @@ def _db_set_channel_enabled(channel: str, status: bool) -> bool:
         return True
     except Exception:
         logger.exception("Failed to update channel enabled setting")
+        return False
+
+
+def _db_get_channel_language(channel: str) -> Optional[str]:
+    if state is None or state.db_path is None:
+        return None
+    key = channel.lower()
+    cache = state.channel_settings_cache
+    if key in cache and "language" in cache[key]:
+        return cache[key]["language"] or None
+    try:
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT language FROM ai_channel_settings WHERE channel = ?", (key,)
+            ).fetchone()
+        val = row[0] if row and row[0] else None
+        cache.setdefault(key, {})["language"] = val
+        return val
+    except Exception:
+        return None
+
+
+def _db_set_channel_language(channel: str, language: str) -> bool:
+    if state is None or state.db_path is None:
+        return False
+    key = channel.lower()
+    try:
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO ai_channel_settings (channel, talkback, enabled, language) "
+                "VALUES (?, 1, 1, ?) "
+                "ON CONFLICT(channel) DO UPDATE SET language = excluded.language",
+                (key, language),
+            )
+            conn.commit()
+        state.channel_settings_cache.setdefault(key, {})["language"] = language
+        return True
+    except Exception:
+        logger.exception("Failed to update channel language setting")
         return False
