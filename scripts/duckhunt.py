@@ -170,11 +170,10 @@ def _save_data() -> None:
     if not state:
         return
     try:
+        from core.utils import atomic_write_json
         path = state.settings.storage_path
-        path.parent.mkdir(parents=True, exist_ok=True)
         data = {ch: cd.to_dict() for ch, cd in state.persistent_data.items()}
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        atomic_write_json(path, data, indent=2)
     except Exception:
         logger.error("Failed to save duckhunt data", exc_info=True)
 

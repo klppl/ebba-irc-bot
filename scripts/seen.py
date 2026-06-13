@@ -317,9 +317,8 @@ def _persist_entries() -> None:
         }
 
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+        from core.utils import atomic_write_json
+        atomic_write_json(path, payload, indent=2, sort_keys=True)
     except Exception:
         logger.warning("Failed to persist seen data to %s", path, exc_info=True)
 

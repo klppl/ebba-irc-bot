@@ -24,6 +24,9 @@ CONFIG_ENV_MAP = {
     "OWNER_NICKS": ("owner_nicks", lambda v: [n.strip() for n in v.split(",") if n.strip()]),
     "RECONNECT_DELAY_SECS": ("reconnect_delay_secs", int),
     "REQUEST_TIMEOUT_SECS": ("request_timeout_secs", int),
+    "SASL": ("sasl", lambda v: v.lower() in {"1", "true", "yes", "on"}),
+    "SASL_USERNAME": ("sasl_username", str),
+    "SASL_PASSWORD": ("sasl_password", str),
 }
 
 

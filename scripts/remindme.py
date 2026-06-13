@@ -338,24 +338,18 @@ def _settings_from_config(bot) -> ReminderSettings:
 
 
 def _load_reminders(path: Path) -> List[Reminder]:
-    if not path.exists():
+    from core.utils import load_json
+
+    data = load_json(path, default=[])
+    if not isinstance(data, list):
         return []
-    
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, list):
-                return []
-            
-            loaded = []
-            for item in data:
-                r = Reminder.from_dict(item)
-                if r:
-                    loaded.append(r)
-            return loaded
-    except Exception:
-        logger.warning("Failed to load reminders from %s", path, exc_info=True)
-        return []
+
+    loaded = []
+    for item in data:
+        r = Reminder.from_dict(item)
+        if r:
+            loaded.append(r)
+    return loaded
 
 
 def _save_reminders() -> None:
@@ -363,13 +357,10 @@ def _save_reminders() -> None:
         return
         
     try:
+        from core.utils import atomic_write_json
         path = state.settings.storage_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        
         data = [r.to_dict() for r in state.reminders]
-        
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        atomic_write_json(path, data, indent=2)
     except Exception:
         logger.error("Failed to save reminders", exc_info=True)
 

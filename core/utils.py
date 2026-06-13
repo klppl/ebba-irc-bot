@@ -29,6 +29,7 @@ class IRCMessage:
     command: str
     params: list
     trailing: Optional[str]
+    tags: Optional[Dict[str, str]] = None
 
 
 def parse_irc_message(line: str) -> IRCMessage:
@@ -36,8 +37,20 @@ def parse_irc_message(line: str) -> IRCMessage:
     prefix = None
     trailing = None
     params = []
+    tags: Optional[Dict[str, str]] = None
 
     rest = line.strip("\r\n")
+
+    # IRCv3 message tags: "@tag1=val;tag2 :prefix COMMAND ..."
+    if rest.startswith("@"):
+        tag_part, _, remainder = rest[1:].partition(" ")
+        tags = {}
+        for item in tag_part.split(";"):
+            if not item:
+                continue
+            key, sep, value = item.partition("=")
+            tags[key] = value if sep else ""
+        rest = remainder.lstrip(" ")
 
     if rest.startswith(":"):
         parts = rest[1:].split(" ", 1)
@@ -51,7 +64,9 @@ def parse_irc_message(line: str) -> IRCMessage:
         params = rest.split()
 
     command = params.pop(0) if params else ""
-    return IRCMessage(prefix=prefix, command=command, params=params, trailing=trailing)
+    return IRCMessage(
+        prefix=prefix, command=command, params=params, trailing=trailing, tags=tags
+    )
 
 
 class AsyncRateLimiter:
@@ -83,6 +98,12 @@ class AsyncRateLimiter:
                 self._events.popleft()
 
             self._events.append(now)
+
+    def is_idle(self) -> bool:
+        """True if no events fall within the current window (safe to discard)."""
+        if not self._events:
+            return True
+        return time.monotonic() - self._events[-1] > self.per_seconds
 
 
 def validate_required_keys(config: Dict[str, object], required: Dict[str, type]) -> None:
@@ -117,6 +138,13 @@ def validate_config(config: Dict[str, Any]) -> None:
 
     if "owner_nicks" in config and not isinstance(config["owner_nicks"], list):
         raise TypeError("Config key 'owner_nicks' must be of type list")
+
+    if "sasl" in config and not isinstance(config["sasl"], bool):
+        raise TypeError("Config key 'sasl' must be of type bool")
+
+    for key in ("sasl_username", "sasl_password"):
+        if key in config and not isinstance(config[key], str):
+            raise TypeError(f"Config key '{key}' must be of type str")
 
 
 def load_yaml_file(path: Path) -> Dict[str, Any]:
@@ -186,4 +214,34 @@ def atomic_write_yaml(path: Path, data: Dict[str, Any]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(data, handle, sort_keys=False)
+    os.replace(tmp_path, path)
+
+
+def load_json(path: Path, default: Any = None) -> Any:
+    """Load JSON from ``path``, returning ``default`` if missing or unreadable."""
+    import json
+
+    if not path.exists():
+        return default
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return default
+
+
+def atomic_write_json(path: Path, data: Any, **dump_kwargs: Any) -> None:
+    """Write JSON to ``path`` atomically (temp file + os.replace).
+
+    A crash mid-write leaves the original file intact instead of a
+    truncated/corrupt one. Extra kwargs are forwarded to ``json.dump``.
+    """
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, **dump_kwargs)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp_path, path)

@@ -1798,7 +1798,12 @@ def _load_channel_prompts() -> Dict[str, Dict[str, Any]]:
 
 def _db_conn() -> sqlite3.Connection:
     assert state is not None and state.db_path is not None
-    return sqlite3.connect(str(state.db_path), check_same_thread=False)
+    conn = sqlite3.connect(str(state.db_path), check_same_thread=False, timeout=10)
+    # WAL allows concurrent readers/writer; busy_timeout avoids spurious
+    # "database is locked" errors if access is ever moved off the event loop.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
 
 
 def _init_db() -> None:

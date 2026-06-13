@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextlib
 import logging
 import signal
@@ -88,6 +89,15 @@ class IRCClient:
         self._target_rate_limiters: Dict[str, AsyncRateLimiter] = {}
         self.ignored_nicks: Set[str] = set()
 
+        # SASL (PLAIN) authentication — optional, negotiated via IRCv3 CAP.
+        self.sasl_enabled = bool(config.get("sasl", False))
+        self.sasl_username = str(config.get("sasl_username") or self.username or self.nickname)
+        self.sasl_password = config.get("sasl_password")
+        if self.sasl_enabled and not self.sasl_password:
+            self.logger.warning("SASL enabled but no sasl_password configured; disabling SASL")
+            self.sasl_enabled = False
+        self._cap_ls_buffer = ""
+
         self.reader: Optional[StreamReader] = None
         self.writer: Optional[StreamWriter] = None
         self._send_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
@@ -152,8 +162,57 @@ class IRCClient:
         await self._cleanup_connection()
 
     async def _register(self) -> None:
+        if self.sasl_enabled:
+            # Begin capability negotiation; registration is held until CAP END.
+            self._cap_ls_buffer = ""
+            await self.send_raw("CAP LS 302")
         await self.send_raw(f"NICK {self.nickname}")
         await self.send_raw(f"USER {self.username} 0 * :{self.realname}")
+
+    async def _handle_cap(self, message: IRCMessage) -> None:
+        # Format: CAP <nick/*> <LS|ACK|NAK> [*] :<caps>
+        subcommand = message.params[1] if len(message.params) >= 2 else ""
+        if subcommand == "LS":
+            more_coming = len(message.params) >= 3 and message.params[2] == "*"
+            self._cap_ls_buffer += " " + (message.trailing or "")
+            if more_coming:
+                return
+            available = set(self._cap_ls_buffer.split())
+            self._cap_ls_buffer = ""
+            if self.sasl_enabled and "sasl" in available:
+                await self.send_raw("CAP REQ :sasl")
+            else:
+                if self.sasl_enabled:
+                    self.logger.warning("Server does not advertise SASL; continuing without it")
+                await self.send_raw("CAP END")
+        elif subcommand == "ACK":
+            acked = set((message.trailing or "").split())
+            if "sasl" in acked:
+                await self.send_raw("AUTHENTICATE PLAIN")
+            else:
+                await self.send_raw("CAP END")
+        elif subcommand == "NAK":
+            self.logger.warning("Server rejected requested capabilities; continuing without SASL")
+            await self.send_raw("CAP END")
+
+    async def _handle_authenticate(self, message: IRCMessage) -> None:
+        token = message.params[0] if message.params else (message.trailing or "")
+        if token != "+":
+            return
+        if not self.sasl_password:
+            await self.send_raw("CAP END")
+            return
+        # SASL PLAIN payload: authzid \0 authcid \0 passwd (empty authzid).
+        payload = f"\0{self.sasl_username}\0{self.sasl_password}".encode("utf-8")
+        encoded = base64.b64encode(payload).decode("ascii")
+        await self.send_raw(f"AUTHENTICATE {encoded}")
+
+    async def _handle_sasl_result(self, message: IRCMessage) -> None:
+        if message.command == "903":
+            self.logger.info("SASL authentication successful")
+        else:
+            self.logger.warning("SASL authentication failed (numeric %s)", message.command)
+        await self.send_raw("CAP END")
 
     async def _cleanup_connection(self) -> None:
         if self._writer_task:
@@ -176,7 +235,7 @@ class IRCClient:
         self.writer = None
         self._writer_task = None
         self._reader_task = None
-        self._send_queue = asyncio.Queue()
+        self._send_queue = asyncio.Queue(maxsize=100)
         self._last_disconnect_time = asyncio.get_running_loop().time()
 
     async def _writer_loop(self) -> None:
@@ -232,6 +291,18 @@ class IRCClient:
         if message.command == "PING":
             payload = message.trailing or "server"
             await self.send_raw(f"PONG :{payload}")
+            return
+
+        if message.command == "CAP":
+            await self._handle_cap(message)
+            return
+
+        if message.command == "AUTHENTICATE":
+            await self._handle_authenticate(message)
+            return
+
+        if message.command in {"903", "904", "905", "906", "907", "908", "902"}:
+            await self._handle_sasl_result(message)
             return
 
         if message.command == "001":
@@ -313,9 +384,25 @@ class IRCClient:
         ]
         await self.privmsg(reply_target, "Status: " + " | ".join(parts))
 
+    # Prune idle per-target limiters once the dict grows past this many entries.
+    _TARGET_LIMITER_PRUNE_THRESHOLD = 512
+
+    def _prune_idle_target_limiters(self) -> None:
+        # Drop limiters with no in-window events; they carry no useful state and
+        # would otherwise accumulate one entry per nick/channel forever.
+        idle = [
+            key
+            for key, limiter in self._target_rate_limiters.items()
+            if limiter.is_idle()
+        ]
+        for key in idle:
+            self._target_rate_limiters.pop(key, None)
+
     async def _acquire_target_rate(self, target: str) -> None:
         limiter = self._target_rate_limiters.get(target.lower())
         if limiter is None:
+            if len(self._target_rate_limiters) >= self._TARGET_LIMITER_PRUNE_THRESHOLD:
+                self._prune_idle_target_limiters()
             limiter = AsyncRateLimiter(self._per_target_count, self._per_target_window)
             self._target_rate_limiters[target.lower()] = limiter
         await limiter.acquire()

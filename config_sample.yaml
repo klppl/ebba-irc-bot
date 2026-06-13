@@ -14,6 +14,10 @@ owner_nicks:
   - '~ident@trusted.host'
 reconnect_delay_secs: 5
 request_timeout_secs: 10
+# SASL PLAIN authentication (optional). Negotiated via IRCv3 CAP.
+# sasl: true
+# sasl_username: ebba          # defaults to username/nickname if omitted
+# sasl_password: change-me
 # Plugins are enabled by default. To disable a plugin:
 # plugins:
 #   plugin_name:

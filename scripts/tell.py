@@ -198,15 +198,9 @@ def _settings_from_config(bot) -> TellSettings:
 
 
 def _load_pending(path: Path) -> Dict[str, Dict[str, List[TellEntry]]]:
-    if not path.exists():
-        return {}
+    from core.utils import load_json
 
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception:
-        logger.warning("Failed to load tells from %s", path, exc_info=True)
-        return {}
+    raw_data = load_json(path, default={})
 
     pending: Dict[str, Dict[str, List[TellEntry]]] = {}
     if not isinstance(raw_data, dict):
@@ -325,9 +319,8 @@ def _save_pending() -> None:
             payload[nick] = channel_payload
 
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+        from core.utils import atomic_write_json
+        atomic_write_json(path, payload, indent=2, sort_keys=True)
     except Exception:
         logger.warning("Failed to persist tell storage to %s", path, exc_info=True)
 

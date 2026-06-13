@@ -273,6 +273,8 @@ async def _writer_loop() -> None:
     if state is None or state.db is None:
         return
 
+    from core.utils import run_blocking
+
     batch: List[tuple] = []
     batch_size = 50
     flush_interval = 5.0
@@ -286,17 +288,18 @@ async def _writer_loop() -> None:
             except asyncio.TimeoutError:
                 # Timeout - flush if we have entries
                 if batch:
-                    _flush_batch(batch)
+                    # Offload the blocking SQLite write so the event loop stays responsive.
+                    await run_blocking(_flush_batch, list(batch))
                     batch.clear()
                 continue
 
             # Flush when batch is full
             if len(batch) >= batch_size:
-                _flush_batch(batch)
+                await run_blocking(_flush_batch, list(batch))
                 batch.clear()
 
         except asyncio.CancelledError:
-            # Flush remaining entries on shutdown
+            # Flush remaining entries synchronously on shutdown (can't await while cancelling).
             if batch:
                 _flush_batch(batch)
             break

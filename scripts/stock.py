@@ -154,9 +154,6 @@ def _fetch_stock_data_sync(symbol):
     except Exception as e:
         logger.error(f"yfinance error for {symbol}: {e}")
         return None
-    except Exception as e:
-        logger.error(f"yfinance error for {symbol}: {e}")
-        return None
 
 
 def _triggers(bot):
