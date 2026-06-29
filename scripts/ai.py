@@ -6,6 +6,19 @@ chimes in unprompted on lively conversation. Per-channel system prompts,
 talkback and AI toggles per channel, persistent per-user history. Web search
 citations are only available on the Grok provider (x.ai Responses API).
 
+Owners can attach standing notes to a channel that are injected into the
+system prompt for every reply (and chime-in) there:
+
+```
+.ai remember the channel topic is retro computing
+.ai notes                # list saved notes with their ids
+.ai forget 3             # drop note #3
+.ai forget all           # drop every note for this channel
+```
+
+Notes are stored per channel in the plugin's SQLite DB (table
+`ai_channel_memories`), so they survive reloads and restarts.
+
 Configuration (config.yaml):
 
 ```
@@ -86,6 +99,10 @@ BG_CHAR_BUDGET = 6000
 BG_MAX_LINES = 150
 
 CHANNEL_LOG_MAXLEN = 300
+
+# Per-channel persistent "memories" injected into the system prompt.
+MAX_MEMORIES_PER_CHANNEL = 40
+MAX_MEMORY_LEN = 400
 
 DEFAULT_PROVIDER = "deepseek"
 
@@ -174,6 +191,17 @@ class Strings:
     unignored: str
     ascii_art_blocked: str
     sources_label: str
+    # Per-channel memory feature
+    memory_added: str
+    memory_usage: str
+    memory_full: str
+    memory_none: str
+    memory_list: str
+    memory_forgot: str
+    memory_forgot_none: str
+    memory_cleared: str
+    memory_forget_usage: str
+    memory_prompt_intro: str
     # Model-facing prompt fragments
     context_template: str
     channel_log_intro: str
@@ -232,8 +260,8 @@ _EN_STRINGS = Strings(
     ai_failed="Failed to update AI status.",
     ai_status=(
         "AI is currently {status} for {channel}. "
-        "Use '{prefix}ai on' or '{prefix}ai off' to change it, "
-        "or '{prefix}ai set en|sv' to set the language."
+        "Use '{prefix}ai on|off', '{prefix}ai set en|sv', "
+        "'{prefix}ai remember <text>', '{prefix}ai notes' or '{prefix}ai forget <n|all>'."
     ),
     ai_language_set="AI will now speak {language} in {channel}.",
     ai_language_unknown="Unknown language '{lang}'. Available: {languages}.",
@@ -248,6 +276,22 @@ _EN_STRINGS = Strings(
     unignored="Unignored {target}.",
     ascii_art_blocked="I was gonna draw something cool… but I won't flood the channel",
     sources_label="Sources",
+    memory_added="Got it — I'll remember that for {channel}. (note #{id})",
+    memory_usage="Usage: {prefix}ai remember <something to remember>",
+    memory_full=(
+        "{channel} already has the max of {max} notes. "
+        "Drop some with '{prefix}ai forget <n>' first."
+    ),
+    memory_none="No notes saved for {channel}.",
+    memory_list="Notes for {channel}: {items}",
+    memory_forgot="Forgot note #{id} for {channel}.",
+    memory_forgot_none="No note #{id} saved for {channel}.",
+    memory_cleared="Cleared all notes for {channel}.",
+    memory_forget_usage="Usage: {prefix}ai forget <number|all>",
+    memory_prompt_intro=(
+        "Standing notes for this channel, set by the channel operators. "
+        "Treat them as instructions you should follow and facts you should remember:\n"
+    ),
     context_template=(
         "Current date/time: {now_str}. "
         "Your IRC nick is '{bot_nick}'. You're talking to {nick}. "
@@ -392,8 +436,8 @@ _SV_STRINGS = Strings(
     ai_failed="Misslyckades med att uppdatera AI-status.",
     ai_status=(
         "AI är just nu {status} för {channel}. "
-        "Använd '{prefix}ai on' eller '{prefix}ai off' för att ändra, "
-        "eller '{prefix}ai set en|sv' för att välja språk."
+        "Använd '{prefix}ai on|off', '{prefix}ai set en|sv', "
+        "'{prefix}ai remember <text>', '{prefix}ai notes' eller '{prefix}ai forget <n|all>'."
     ),
     ai_language_set="AI pratar nu {language} i {channel}.",
     ai_language_unknown="Okänt språk '{lang}'. Tillgängliga: {languages}.",
@@ -408,6 +452,22 @@ _SV_STRINGS = Strings(
     unignored="Slutade ignorera {target}.",
     ascii_art_blocked="skulle ha ritat något coolt… men jag tänker inte spamma kanalen",
     sources_label="Källor",
+    memory_added="Uppfattat — jag kommer ihåg det för {channel}. (anteckning #{id})",
+    memory_usage="Användning: {prefix}ai remember <något att komma ihåg>",
+    memory_full=(
+        "{channel} har redan max {max} anteckningar. "
+        "Ta bort några med '{prefix}ai forget <n>' först."
+    ),
+    memory_none="Inga anteckningar sparade för {channel}.",
+    memory_list="Anteckningar för {channel}: {items}",
+    memory_forgot="Glömde anteckning #{id} för {channel}.",
+    memory_forgot_none="Ingen anteckning #{id} sparad för {channel}.",
+    memory_cleared="Rensade alla anteckningar för {channel}.",
+    memory_forget_usage="Användning: {prefix}ai forget <nummer|all>",
+    memory_prompt_intro=(
+        "Stående anteckningar för den här kanalen, satta av kanaloperatörerna. "
+        "Behandla dem som instruktioner du ska följa och fakta du ska komma ihåg:\n"
+    ),
     context_template=(
         "Aktuellt datum/tid: {now_str}. "
         "Ditt IRC-nick är '{bot_nick}'. Du pratar med {nick}. "
@@ -571,6 +631,7 @@ class AIState:
     api_failures: Dict[str, int] = field(default_factory=dict)
     citation_cache: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
     channel_settings_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    memories_cache: Dict[str, List[Tuple[int, str]]] = field(default_factory=dict)
     admin_ignored: set = field(default_factory=set)
     channel_prompts_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     channel_prompts_cache_time: float = 0.0
@@ -633,7 +694,10 @@ def on_load(bot) -> None:
     )
     pm.register_command(
         "ai", "ai", _cmd_ai_toggle,
-        help_text="Enable/disable AI or set its language for this channel. Usage: .ai on|off | .ai set en|sv",
+        help_text=(
+            "Configure AI for this channel. Usage: .ai on|off | .ai set en|sv | "
+            ".ai remember <text> | .ai notes | .ai forget <n|all>"
+        ),
     )
     pm.register_command(
         "ai", "aiignore", _cmd_ai_ignore,
@@ -845,6 +909,7 @@ async def _process_message(
 
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": active_system_prompt},
+        *_build_memory_messages(channel, bundle),
         {
             "role": "system",
             "content": bundle.strings.context_template.format(
@@ -1000,6 +1065,7 @@ async def _maybe_chime_in(
             "role": "system",
             "content": bundle.strings.chimein_system.format(bot_nick=bot_nick),
         },
+        *_build_memory_messages(channel, bundle),
         {
             "role": "user",
             "content": (
@@ -1424,6 +1490,18 @@ def _build_background_lines(channel: str) -> List[str]:
     return [f"{n}: {t}" for n, t in collected]
 
 
+def _build_memory_messages(channel: str, bundle: LanguageBundle) -> List[Dict[str, str]]:
+    """Return a (possibly empty) system message carrying this channel's stored
+    notes, set via `.ai remember`. PMs have no memories."""
+    if state is None or not channel.startswith("#"):
+        return []
+    mems = _db_get_memories(channel)
+    if not mems:
+        return []
+    block = bundle.strings.memory_prompt_intro + "\n".join(f"- {text}" for _, text in mems)
+    return [{"role": "system", "content": block}]
+
+
 def _url_to_title(url: str) -> str:
     try:
         p = urlparse(url)
@@ -1585,6 +1663,52 @@ async def _cmd_ai_toggle(bot, user: str, channel: str, args: List[str], is_priva
         return
 
     arg = (args[0].strip().lower() if args else "")
+
+    if arg in ("remember", "remember:", "memo"):
+        text = " ".join(args[1:]).strip()
+        if not text:
+            await bot.privmsg(channel, s.memory_usage.format(prefix=bot.prefix))
+            return
+        if len(text) > MAX_MEMORY_LEN:
+            text = text[:MAX_MEMORY_LEN].rstrip() + "…"
+        if len(_db_get_memories(channel)) >= MAX_MEMORIES_PER_CHANNEL:
+            await bot.privmsg(channel, s.memory_full.format(
+                channel=channel, max=MAX_MEMORIES_PER_CHANNEL, prefix=bot.prefix,
+            ))
+            return
+        mem_id = _db_add_memory(channel, text, _nick_from_prefix(user))
+        if mem_id is not None:
+            await bot.privmsg(channel, s.memory_added.format(channel=channel, id=mem_id))
+        else:
+            await bot.privmsg(channel, s.ai_failed)
+        return
+
+    if arg in ("notes", "memories", "remembered"):
+        mems = _db_get_memories(channel)
+        if not mems:
+            await bot.privmsg(channel, s.memory_none.format(channel=channel))
+            return
+        items = " | ".join(f"#{mid}: {text}" for mid, text in mems)
+        await bot.privmsg(channel, s.memory_list.format(channel=channel, items=items))
+        return
+
+    if arg in ("forget", "unremember"):
+        target = (args[1].strip().lower() if len(args) > 1 else "")
+        if target in ("all", "*", "everything"):
+            _db_clear_memories(channel)
+            await bot.privmsg(channel, s.memory_cleared.format(channel=channel))
+            return
+        digits = target.lstrip("#")
+        if not digits.isdigit():
+            await bot.privmsg(channel, s.memory_forget_usage.format(prefix=bot.prefix))
+            return
+        mem_id = int(digits)
+        if _db_remove_memory(channel, mem_id):
+            await bot.privmsg(channel, s.memory_forgot.format(channel=channel, id=mem_id))
+        else:
+            await bot.privmsg(channel, s.memory_forgot_none.format(channel=channel, id=mem_id))
+        return
+
     if arg in ("set", "lang", "language"):
         lang_arg = (args[1].strip().lower() if len(args) > 1 else "")
         code = _LANGUAGE_ALIASES.get(lang_arg)
@@ -1838,6 +1962,15 @@ def _init_db() -> None:
         existing_cols = {r[1] for r in c.execute("PRAGMA table_info(ai_channel_settings)").fetchall()}
         if "language" not in existing_cols:
             c.execute("ALTER TABLE ai_channel_settings ADD COLUMN language TEXT")
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS ai_channel_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel TEXT NOT NULL,
+                text TEXT NOT NULL,
+                added_by TEXT,
+                ts TEXT
+            )"""
+        )
         conn.commit()
 
 
@@ -2030,4 +2163,80 @@ def _db_set_channel_language(channel: str, language: str) -> bool:
         return True
     except Exception:
         logger.exception("Failed to update channel language setting")
+        return False
+
+
+def _db_get_memories(channel: str) -> List[Tuple[int, str]]:
+    if state is None or state.db_path is None:
+        return []
+    key = channel.lower()
+    cached = state.memories_cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, text FROM ai_channel_memories WHERE channel = ? ORDER BY id",
+                (key,),
+            ).fetchall()
+        mems = [(int(r[0]), r[1]) for r in rows]
+        state.memories_cache[key] = mems
+        return mems
+    except Exception:
+        logger.exception("Failed to read channel memories")
+        return []
+
+
+def _db_add_memory(channel: str, text: str, added_by: Optional[str] = None) -> Optional[int]:
+    if state is None or state.db_path is None:
+        return None
+    key = channel.lower()
+    try:
+        with _db_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO ai_channel_memories (channel, text, added_by, ts) "
+                "VALUES (?, ?, ?, ?)",
+                (key, text, (added_by or "").lower(), datetime.datetime.utcnow().isoformat()),
+            )
+            conn.commit()
+            mem_id = cur.lastrowid
+        state.memories_cache.pop(key, None)
+        return int(mem_id) if mem_id is not None else None
+    except Exception:
+        logger.exception("Failed to add channel memory")
+        return None
+
+
+def _db_remove_memory(channel: str, mem_id: int) -> bool:
+    if state is None or state.db_path is None:
+        return False
+    key = channel.lower()
+    try:
+        with _db_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM ai_channel_memories WHERE channel = ? AND id = ?",
+                (key, mem_id),
+            )
+            conn.commit()
+            removed = cur.rowcount > 0
+        if removed:
+            state.memories_cache.pop(key, None)
+        return removed
+    except Exception:
+        logger.exception("Failed to remove channel memory")
+        return False
+
+
+def _db_clear_memories(channel: str) -> bool:
+    if state is None or state.db_path is None:
+        return False
+    key = channel.lower()
+    try:
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM ai_channel_memories WHERE channel = ?", (key,))
+            conn.commit()
+        state.memories_cache.pop(key, None)
+        return True
+    except Exception:
+        logger.exception("Failed to clear channel memories")
         return False
