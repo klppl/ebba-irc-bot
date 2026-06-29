@@ -800,7 +800,7 @@ class IRCClient:
             await self._cmd_plugins(reply_target)
             return
         if command in {"load", "unload", "reload"}:
-            await self._cmd_load(command, reply_target, args)
+            await self._cmd_load(command, prefix, reply_target, args)
             return
         if command in {"say", "join", "part"}:
             await self._cmd_say_join_part(command, prefix, reply_target, args)
@@ -867,7 +867,12 @@ class IRCClient:
         message = f"Enabled plugins: {enabled_str} | Disabled plugins: {disabled_str}"
         await self.privmsg(reply_target, message)
 
-    async def _cmd_load(self, command: str, reply_target: str, args: List[str]) -> None:
+    async def _cmd_load(
+        self, command: str, prefix: Optional[str], reply_target: str, args: List[str]
+    ) -> None:
+        if not self._has_owner_access(prefix):
+            await self.privmsg(reply_target, "You do not have permission for that command.")
+            return
         if not args:
             await self.privmsg(reply_target, f"Usage: {self.prefix}{command} <plugin>")
             return
