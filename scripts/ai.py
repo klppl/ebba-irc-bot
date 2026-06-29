@@ -1678,7 +1678,10 @@ async def _cmd_ai_toggle(bot, user: str, channel: str, args: List[str], is_priva
             return
         mem_id = _db_add_memory(channel, text, _nick_from_prefix(user))
         if mem_id is not None:
-            await bot.privmsg(channel, s.memory_added.format(channel=channel, id=mem_id))
+            # Show the position within THIS channel (1-based), not the global
+            # DB row id, so each channel numbers its own notes from #1.
+            pos = len(_db_get_memories(channel))
+            await bot.privmsg(channel, s.memory_added.format(channel=channel, id=pos))
         else:
             await bot.privmsg(channel, s.ai_failed)
         return
@@ -1688,7 +1691,7 @@ async def _cmd_ai_toggle(bot, user: str, channel: str, args: List[str], is_priva
         if not mems:
             await bot.privmsg(channel, s.memory_none.format(channel=channel))
             return
-        items = " | ".join(f"#{mid}: {text}" for mid, text in mems)
+        items = " | ".join(f"#{pos}: {text}" for pos, (_mid, text) in enumerate(mems, 1))
         await bot.privmsg(channel, s.memory_list.format(channel=channel, items=items))
         return
 
@@ -1702,11 +1705,16 @@ async def _cmd_ai_toggle(bot, user: str, channel: str, args: List[str], is_priva
         if not digits.isdigit():
             await bot.privmsg(channel, s.memory_forget_usage.format(prefix=bot.prefix))
             return
-        mem_id = int(digits)
-        if _db_remove_memory(channel, mem_id):
-            await bot.privmsg(channel, s.memory_forgot.format(channel=channel, id=mem_id))
-        else:
-            await bot.privmsg(channel, s.memory_forgot_none.format(channel=channel, id=mem_id))
+        pos = int(digits)
+        # `pos` is the per-channel position shown by `.ai notes`; map it back to
+        # the internal row id before deleting.
+        mems = _db_get_memories(channel)
+        if 1 <= pos <= len(mems):
+            real_id = mems[pos - 1][0]
+            if _db_remove_memory(channel, real_id):
+                await bot.privmsg(channel, s.memory_forgot.format(channel=channel, id=pos))
+                return
+        await bot.privmsg(channel, s.memory_forgot_none.format(channel=channel, id=pos))
         return
 
     if arg in ("set", "lang", "language"):
