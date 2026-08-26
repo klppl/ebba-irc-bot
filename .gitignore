@@ -81,3 +81,6 @@ scripts/*.json
 scripts/seen_users.json
 *.json
 todo/ai-grok.py
+
+# AI plugin runtime state (contains IRC conversation history)
+scripts/ai_data/

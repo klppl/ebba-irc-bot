@@ -22,3 +22,23 @@ request_timeout_secs: 10
 # plugins:
 #   plugin_name:
 #     enabled: false
+#
+# Production Grok configuration (the key may instead be set in XAI_API_KEY):
+# plugins:
+#   ai:
+#     enabled: true
+#     provider: grok
+#     api_key: ""
+#     model: grok-4.6
+#     language: en
+#     grok_reasoning_effort: low
+#     search_max_turns: 2
+#     chimein_enabled: true  # master switch; use .talkback on per channel
+#     store_responses: false
+#     history_retention_days: 30
+#     history_max_entries: 100
+#     connect_timeout_secs: 10
+#     request_timeout_secs: 90
+#     api_attempts: 2
+#     failure_threshold: 5
+#     failure_cooldown_secs: 60
