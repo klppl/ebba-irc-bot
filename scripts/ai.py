@@ -629,6 +629,7 @@ class AIState:
     api_failures: Dict[str, int] = field(default_factory=dict)
     circuit_open_until: Dict[str, float] = field(default_factory=dict)
     citation_cache: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
+    context_revisions: Dict[str, int] = field(default_factory=dict)
     channel_settings_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     memories_cache: Dict[str, List[Tuple[int, str]]] = field(default_factory=dict)
     admin_ignored: set = field(default_factory=set)
@@ -772,12 +773,9 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
     if not line:
         return
 
-    # Capture channel log BEFORE any filtering
-    if not is_pm and not re.match(r"^MODE ", line, re.IGNORECASE):
-        dq = state.channel_log.setdefault(channel.lower(), deque(maxlen=CHANNEL_LOG_MAXLEN))
-        dq.append((nick, line))
-
-    # Don't process bot command prefixes addressed to other plugins
+    # Commands are handled separately by the plugin manager. Never put them in
+    # model context: memory-management commands can resurrect forgotten notes,
+    # and other commands may contain sensitive arguments.
     bot_nick = bot.nickname
     command_prefixes = ("!", "$", ".", ":", "/", "\\", bot.prefix)
     candidate = line
@@ -786,6 +784,11 @@ def on_message(bot, user: str, channel: str, message: str) -> None:
         candidate = (m_addr.group(1) or "").lstrip()
     if candidate and candidate.startswith(command_prefixes):
         return
+
+    # Capture ordinary conversation only after command filtering.
+    if not is_pm and not re.match(r"^MODE ", line, re.IGNORECASE):
+        dq = state.channel_log.setdefault(channel.lower(), deque(maxlen=CHANNEL_LOG_MAXLEN))
+        dq.append((nick, line))
 
     # Don't react to noise events
     if re.search(r"has (joined|quit|left|parted)", line, re.IGNORECASE):
@@ -834,6 +837,7 @@ async def _process_message(
     task_state = state
     assert task_state is not None
     bot_nick = bot.nickname
+    context_revision = task_state.context_revisions.get(channel.lower(), 0)
 
     if is_pm:
         per_conv_key: Tuple[str, str] = ("PM", nick.lower())
@@ -845,6 +849,10 @@ async def _process_message(
     chan_lock = _get_channel_lock(lock_name)
 
     async with chan_lock:
+        # A forget/reset may have completed after this task was scheduled.
+        # Abort before restoring any of the context that it just cleared.
+        if state.context_revisions.get(channel.lower(), 0) != context_revision:
+            return
         history = state.history.setdefault(
             per_conv_key, deque(maxlen=MAX_HISTORY_ENTRIES)
         )
@@ -891,6 +899,8 @@ async def _process_message(
     now = time.time()
     if not time_mode:
         async with chan_lock:
+            if state.context_revisions.get(channel.lower(), 0) != context_revision:
+                return
             last = state.last_response.get(channel, 0.0)
             if now - last < CHANNEL_RATE_LIMIT:
                 return
@@ -943,6 +953,8 @@ async def _process_message(
             ]
         else:
             async with chan_lock:
+                if state.context_revisions.get(channel.lower(), 0) != context_revision:
+                    return
                 snapshot = list(history)
             relevant_turns = []
             for entry in snapshot:
@@ -975,6 +987,8 @@ async def _process_message(
             role = "assistant" if nk == bot_nick else "user"
             messages.append({"role": role, "content": tx})
         messages.append({"role": "user", "content": user_message})
+        if state.context_revisions.get(channel.lower(), 0) != context_revision:
+            return
         _db_add_turn(nick, "user", user_message, source)
     else:
         messages.append({
@@ -1044,7 +1058,7 @@ async def _process_message(
             bot, nick, channel, messages, review_mode, is_pm,
             search_mode=search_mode, wants_sources=wants_sources,
             is_chimein=False, chan_lock=chan_lock, per_conv_key=per_conv_key,
-            bundle=bundle,
+            bundle=bundle, context_revision=context_revision,
         )
     finally:
         task_state.busy.pop(channel, None)
@@ -1067,6 +1081,7 @@ async def _maybe_chime_in(
         return
 
     ch_key = channel.lower()
+    context_revision = state.context_revisions.get(ch_key, 0)
     now = time.time()
     if now - state.chimein_last.get(ch_key, 0.0) < CHIMEIN_COOLDOWN:
         return
@@ -1107,7 +1122,7 @@ async def _maybe_chime_in(
             bot, nick, channel, messages, review_mode=False, is_pm=False,
             search_mode=False, wants_sources=False, is_chimein=True,
             chan_lock=chan_lock, per_conv_key=(channel.lower(), nick.lower()),
-            bundle=bundle,
+            bundle=bundle, context_revision=context_revision,
         )
     finally:
         task_state.busy.pop(channel, None)
@@ -1129,9 +1144,13 @@ async def _run_completion(
     chan_lock: asyncio.Lock,
     per_conv_key: Tuple[str, str],
     bundle: LanguageBundle,
+    context_revision: int,
 ) -> None:
     assert state is not None
     bot_nick = bot.nickname
+
+    if state.context_revisions.get(channel.lower(), 0) != context_revision:
+        return
 
     now = time.monotonic()
     open_until = state.circuit_open_until.get(channel, 0.0)
@@ -1202,6 +1221,10 @@ async def _run_completion(
 
     if not reply:
         logger.warning("AI API returned empty reply")
+        return
+
+    if state.context_revisions.get(channel.lower(), 0) != context_revision:
+        logger.info("Discarding AI reply generated from cleared context for %s", channel)
         return
 
     reply = _sanitize_reply(nick, reply, bundle, state.settings.max_reply_chars)
@@ -1288,9 +1311,14 @@ async def _run_completion(
         final_reply = reply
 
     await asyncio.sleep(random.uniform(TYPING_DELAY_MIN, TYPING_DELAY_MAX))
-    await _send_split(bot, channel, final_reply)
-
+    if state.context_revisions.get(channel.lower(), 0) != context_revision:
+        logger.info("Discarding AI reply after context was cleared for %s", channel)
+        return
     async with chan_lock:
+        if state.context_revisions.get(channel.lower(), 0) != context_revision:
+            logger.info("Discarding AI reply while context was cleared for %s", channel)
+            return
+        await _send_split(bot, channel, final_reply)
         if not is_chimein:
             history = state.history.setdefault(
                 per_conv_key, deque(maxlen=MAX_HISTORY_ENTRIES)
@@ -1301,8 +1329,8 @@ async def _run_completion(
             dq = state.channel_log.setdefault(channel.lower(), deque(maxlen=CHANNEL_LOG_MAXLEN))
             dq.append((bot_nick, reply))
 
-    if not is_chimein:
-        _db_add_turn(nick, "assistant", reply, _conversation_source(channel, is_pm))
+        if not is_chimein:
+            _db_add_turn(nick, "assistant", reply, _conversation_source(channel, is_pm))
 
 
 async def _call_api(
@@ -1761,11 +1789,7 @@ async def _cmd_aireset(bot, user: str, channel: str, args: List[str], is_private
         if not _is_owner(bot, user):
             await bot.privmsg(channel, s.owner_only_reset)
             return
-        for key in list(state.history.keys()):
-            if isinstance(key, tuple) and key[0].lower() == target.lower():
-                del state.history[key]
-        state.channel_log.pop(target.lower(), None)
-        state.citation_cache.pop(target.lower(), None)
+        _clear_channel_runtime_context(target)
         _db_clear_history(source=target.lower())
         await bot.privmsg(channel, s.history_reset_channel.format(target=target))
         return
@@ -1856,8 +1880,14 @@ async def _cmd_ai_toggle(bot, user: str, channel: str, args: List[str], is_priva
     if arg in ("forget", "unremember"):
         target = (args[1].strip().lower() if len(args) > 1 else "")
         if target in ("all", "*", "everything"):
-            _db_clear_memories(channel)
-            await bot.privmsg(channel, s.memory_cleared.format(channel=channel))
+            async with _get_channel_lock(channel.lower()):
+                cleared = _db_clear_memories(channel, clear_history=True)
+                if cleared:
+                    _clear_channel_runtime_context(channel)
+            if cleared:
+                await bot.privmsg(channel, s.memory_cleared.format(channel=channel))
+            else:
+                await bot.privmsg(channel, s.ai_failed)
             return
         digits = target.lstrip("#")
         if not digits.isdigit():
@@ -1866,12 +1896,17 @@ async def _cmd_ai_toggle(bot, user: str, channel: str, args: List[str], is_priva
         pos = int(digits)
         # `pos` is the per-channel position shown by `.ai notes`; map it back to
         # the internal row id before deleting.
-        mems = _db_get_memories(channel)
-        if 1 <= pos <= len(mems):
-            real_id = mems[pos - 1][0]
-            if _db_remove_memory(channel, real_id):
-                await bot.privmsg(channel, s.memory_forgot.format(channel=channel, id=pos))
-                return
+        forgotten = False
+        async with _get_channel_lock(channel.lower()):
+            mems = _db_get_memories(channel)
+            if 1 <= pos <= len(mems):
+                real_id = mems[pos - 1][0]
+                forgotten = _db_remove_memory(channel, real_id, clear_history=True)
+                if forgotten:
+                    _clear_channel_runtime_context(channel)
+        if forgotten:
+            await bot.privmsg(channel, s.memory_forgot.format(channel=channel, id=pos))
+            return
         await bot.privmsg(channel, s.memory_forgot_none.format(channel=channel, id=pos))
         return
 
@@ -1998,6 +2033,24 @@ def _conversation_source(channel: str, is_pm: bool) -> str:
     return "PM" if is_pm else channel.lower()
 
 
+def _clear_channel_runtime_context(channel: str) -> None:
+    """Drop every in-memory prompt source for a channel.
+
+    Persistent user history is cleared atomically with memory deletion by the
+    database helpers when requested. This removes the runtime copies so a
+    deleted note cannot survive through an earlier user or assistant turn.
+    """
+    if state is None:
+        return
+    target = channel.lower()
+    state.context_revisions[target] = state.context_revisions.get(target, 0) + 1
+    for key in list(state.history.keys()):
+        if isinstance(key, tuple) and key[0].lower() == target:
+            del state.history[key]
+    state.channel_log.pop(target, None)
+    state.citation_cache.pop(target, None)
+
+
 def _search_guidance(bundle: LanguageBundle, supports_search: bool) -> str:
     if bundle.code == "sv":
         if supports_search:
@@ -2046,10 +2099,11 @@ def _is_owner(bot, prefix: str) -> bool:
 
 def _get_channel_lock(key: str) -> asyncio.Lock:
     assert state is not None
-    lock = state.channel_locks.get(key)
+    normalized = key.lower()
+    lock = state.channel_locks.get(normalized)
     if lock is None:
         lock = asyncio.Lock()
-        state.channel_locks[key] = lock
+        state.channel_locks[normalized] = lock
     return lock
 
 
@@ -2637,7 +2691,12 @@ def _db_add_memory(channel: str, text: str, added_by: Optional[str] = None) -> O
         return None
 
 
-def _db_remove_memory(channel: str, mem_id: int) -> bool:
+def _db_remove_memory(
+    channel: str,
+    mem_id: int,
+    *,
+    clear_history: bool = False,
+) -> bool:
     if state is None or state.db_path is None:
         return False
     key = channel.lower()
@@ -2647,8 +2706,12 @@ def _db_remove_memory(channel: str, mem_id: int) -> bool:
                 "DELETE FROM ai_channel_memories WHERE channel = ? AND id = ?",
                 (key, mem_id),
             )
-            conn.commit()
             removed = cur.rowcount > 0
+            if removed and clear_history:
+                conn.execute(
+                    "DELETE FROM ai_user_history WHERE source = ?", (key,)
+                )
+            conn.commit()
         if removed:
             state.memories_cache.pop(key, None)
         return removed
@@ -2657,13 +2720,17 @@ def _db_remove_memory(channel: str, mem_id: int) -> bool:
         return False
 
 
-def _db_clear_memories(channel: str) -> bool:
+def _db_clear_memories(channel: str, *, clear_history: bool = False) -> bool:
     if state is None or state.db_path is None:
         return False
     key = channel.lower()
     try:
         with _db_conn() as conn:
             conn.execute("DELETE FROM ai_channel_memories WHERE channel = ?", (key,))
+            if clear_history:
+                conn.execute(
+                    "DELETE FROM ai_user_history WHERE source = ?", (key,)
+                )
             conn.commit()
         state.memories_cache.pop(key, None)
         return True
