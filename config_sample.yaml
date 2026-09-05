@@ -23,16 +23,20 @@ request_timeout_secs: 10
 #   plugin_name:
 #     enabled: false
 #
-# Production Grok configuration (the key may instead be set in XAI_API_KEY):
+# Cost-optimized OpenAI configuration (the key may instead be set in OPENAI_API_KEY):
 # plugins:
 #   ai:
 #     enabled: true
-#     provider: grok
+#     provider: openai
 #     api_key: ""
-#     model: grok-4.6
+#     model: gpt-5.6-luna
 #     language: en
-#     grok_reasoning_effort: low
-#     search_max_turns: 2
+#     reasoning_effort: none
+#     search_max_calls: 1
+#     search_context_size: low
+#     history_context_entries: 8
+#     background_context_chars: 1200
+#     max_reply_chars: 420
 #     chimein_enabled: true  # master switch; use .talkback on per channel
 #     store_responses: false
 #     history_retention_days: 30

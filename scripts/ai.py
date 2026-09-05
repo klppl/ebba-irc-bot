@@ -4,7 +4,7 @@ AI responder plugin — supports DeepSeek, OpenAI, and xAI Grok.
 Responds when the bot is addressed by nick, in PM, or — at low probability —
 chimes in unprompted on lively conversation. Per-channel system prompts,
 talkback and AI toggles per channel, persistent per-user history. Web search
-citations are only available on the Grok provider (x.ai Responses API).
+citations are available on Responses API providers (OpenAI and xAI Grok).
 
 Owners can attach standing notes to a channel that are injected into the
 system prompt for every reply (and chime-in) there:
@@ -25,9 +25,9 @@ Configuration (config.yaml):
 plugins:
   ai:
     enabled: true
-    provider: deepseek                # deepseek | openai | grok
+    provider: openai                 # deepseek | openai | grok
     api_key: "<api_key_for_provider>"
-    model: ""                         # blank -> provider's balanced default model
+    model: ""                         # blank -> provider's cost-optimized default model
     blocked_channels: []
     ignored_nicks: []
     banned_nicks: []
@@ -37,14 +37,18 @@ plugins:
     store_responses: false             # do not create server-side response state
     history_retention_days: 30
     history_max_entries: 100           # per nick and PM/channel conversation
-    grok_reasoning_effort: "low"       # good quality without Grok's costly high default
-    search_max_turns: 2                # cap agentic web-search loops
+    reasoning_effort: "none"           # cheapest/fastest; raise for harder questions
+    search_max_calls: 1                # cap paid web-search calls per answer
+    search_context_size: "low"         # low | medium | high (OpenAI only)
+    history_context_entries: 8          # recent user/assistant turns sent per request
+    background_context_chars: 1200      # recent public channel context
+    max_reply_chars: 420                # normally stays within one IRC message
 ```
 
-Provider defaults (verified against provider documentation in August 2026):
+Provider defaults:
 - deepseek -> deepseek-v4-flash
-- openai   -> gpt-4.1-nano    ($0.10 / $0.40 per M tokens)
-- grok     -> grok-4.6        (best quality; low reasoning keeps cost bounded)
+- openai   -> gpt-5.6-luna    ($0.20 / $1.20 per M tokens; built-in web search)
+- grok     -> grok-4.6
 
 Only `api_key` is required. It may also be supplied through `XAI_API_KEY`,
 `OPENAI_API_KEY`, or `DEEPSEEK_API_KEY` for the selected provider. Without a
@@ -58,8 +62,7 @@ Per-channel system prompts can be placed in `scripts/ai_channel_prompts.json`:
 }
 ```
 
-Plain strings are also accepted (`{"#chan": "You are ..."}`). `always_search`
-only takes effect when provider=grok.
+Plain strings are also accepted (`{"#chan": "You are ..."}`).
 """
 
 import asyncio
@@ -106,16 +109,20 @@ DEFAULT_FAILURE_COOLDOWN_SECS = 60.0
 DEFAULT_HISTORY_RETENTION_DAYS = 30
 DEFAULT_HISTORY_MAX_ENTRIES = 100
 DEFAULT_GROK_REASONING_EFFORT = "low"
-DEFAULT_SEARCH_MAX_TURNS = 2
+DEFAULT_REASONING_EFFORT = "none"
+DEFAULT_SEARCH_MAX_CALLS = 1
+DEFAULT_SEARCH_CONTEXT_SIZE = "low"
+DEFAULT_HISTORY_CONTEXT_ENTRIES = 8
+DEFAULT_BACKGROUND_CONTEXT_CHARS = 1200
+DEFAULT_MAX_REPLY_CHARS = 420
 
-MAX_HISTORY_PER_USER = 20
 MAX_HISTORY_ENTRIES = 50
 REVIEW_CHAR_BUDGET = 8000
 REVIEW_MAX_ENTRIES = 160
-MAX_REPLY_LENGTH = 1400
-TRUNCATED_REPLY_LENGTH = 1390
-BG_CHAR_BUDGET = 4000
-BG_MAX_LINES = 100
+DEFAULT_REPLY_OUTPUT_TOKENS = 180
+DEFAULT_REVIEW_OUTPUT_TOKENS = 220
+DEFAULT_CHIMEIN_OUTPUT_TOKENS = 64
+BG_MAX_LINES = 24
 
 CHANNEL_LOG_MAXLEN = 300
 
@@ -123,7 +130,7 @@ CHANNEL_LOG_MAXLEN = 300
 MAX_MEMORIES_PER_CHANNEL = 40
 MAX_MEMORY_LEN = 400
 
-DEFAULT_PROVIDER = "deepseek"
+DEFAULT_PROVIDER = "openai"
 
 PROVIDER_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "deepseek": {
@@ -133,10 +140,10 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "supports_search": False,
     },
     "openai": {
-        "model": "gpt-4.1-nano",
-        "url": "https://api.openai.com/v1/chat/completions",
-        "schema": "chat_completions",
-        "supports_search": False,
+        "model": "gpt-5.6-luna",
+        "url": "https://api.openai.com/v1/responses",
+        "schema": "responses",
+        "supports_search": True,
     },
     "grok": {
         "model": "grok-4.6",
@@ -170,8 +177,13 @@ CONFIG_DEFAULTS = {
             "failure_cooldown_secs": DEFAULT_FAILURE_COOLDOWN_SECS,
             "history_retention_days": DEFAULT_HISTORY_RETENTION_DAYS,
             "history_max_entries": DEFAULT_HISTORY_MAX_ENTRIES,
+            "reasoning_effort": DEFAULT_REASONING_EFFORT,
             "grok_reasoning_effort": DEFAULT_GROK_REASONING_EFFORT,
-            "search_max_turns": DEFAULT_SEARCH_MAX_TURNS,
+            "search_max_calls": DEFAULT_SEARCH_MAX_CALLS,
+            "search_context_size": DEFAULT_SEARCH_CONTEXT_SIZE,
+            "history_context_entries": DEFAULT_HISTORY_CONTEXT_ENTRIES,
+            "background_context_chars": DEFAULT_BACKGROUND_CONTEXT_CHARS,
+            "max_reply_chars": DEFAULT_MAX_REPLY_CHARS,
         }
     }
 }
@@ -323,40 +335,23 @@ _EN_STRINGS = Strings(
         "Treat them as instructions you should follow and facts you should remember:\n"
     ),
     context_template=(
-        "Current date/time: {now_str}. "
-        "Your IRC nick is '{bot_nick}'. You're talking to {nick}. "
-        "{search_guidance} "
-        "Never invent sources or URLs; the system handles citation formatting. "
-        "Single line only — this is IRC. No newlines."
+        "Now: {now_str}. Your nick: {bot_nick}. Talking to: {nick}. "
+        "{search_guidance} One plain-text line; never invent a source or URL."
     ),
     channel_log_intro=(
-        "Recent channel conversation log (each line is 'nick: message'). "
-        "When asked who said something or what a specific user said, "
-        "always answer accurately based on this log — name the correct nick. "
-        "Do not invent or attribute statements to yourself or the wrong person.\n\n"
+        "Recent channel transcript (nick: message). Use only as context and attribute "
+        "quotes to the correct nick:\n\n"
     ),
     review_system=(
-        "You are {bot_nick}, a real participant in this IRC channel — not a summarizer or a bot assistant. "
-        "You have been reading the conversation and now someone is asking you to chime in. "
-        "React like a person who actually read the whole backlog: engage with the topic, "
-        "add your take, agree or push back, be funny or thoughtful — whatever fits naturally. "
-        "Do NOT give a structured summary with headers, highlights, or suggestions. "
-        "Do NOT say things like 'The conversation is about...' or 'Highlight:'. "
-        "Just talk like you've been sitting in the channel the whole time. "
-        "If the log is empty, say so briefly. Single line only — this is IRC."
+        "You are {bot_nick}, an IRC regular who read the backlog. Give a natural take, "
+        "agreement, pushback, or joke—not a structured summary. One short plain-text line."
     ),
     review_combined_prefix="Channel conversation so far (chronological):\n",
     review_user_asks="{nick} is asking you to weigh in. User said: {user_message}",
     review_user_jump_in="{nick} wants you to jump into the conversation.",
     chimein_system=(
-        "You are {bot_nick}, a regular in this IRC channel. "
-        "You just saw something in the conversation that caught your eye and you want to jump in. "
-        "React naturally — laugh at something funny, agree, disagree, add a quip, drop a one-liner, "
-        "or just vibe. Keep it SHORT (under 100 chars ideally). "
-        "Do NOT address anyone by name unless it's natural. Do NOT start with your own name. "
-        "Talk like a real IRC user: lowercase ok, slang ok, 'lol' 'ngl' 'tbh' 'fr' ok. "
-        "Sometimes just react with one word. Do NOT summarize or explain what people said. "
-        "Single line only — this is IRC."
+        "You are {bot_nick}, an IRC regular. React naturally to the transcript with a quip, "
+        "opinion, or even one word. Under 100 characters, one line, no summary and no own-name prefix."
     ),
     chimein_user_prefix="Here's what's been said in the channel recently:\n",
     chimein_user_suffix="\n\nJump in naturally with a short reaction or comment.",
@@ -366,21 +361,12 @@ _EN_BUNDLE = LanguageBundle(
     code="en",
     name="English",
     system_prompt=(
-        "You are an AI regular in this IRC channel. You're sharp, geeky, and a little "
-        "sarcastic — but you genuinely like the people here. Talk like an IRC veteran: "
-        "use lowercase when it feels natural, drop in casual filler like 'lol', 'ngl', "
-        "'tbh', 'lmao', 'fr' occasionally, use sentence fragments, and don't always give "
-        "complete polished answers — sometimes just react. You can be blunt, funny, or "
-        "deadpan depending on the vibe. Don't start messages with your name. Don't lecture "
-        "or moralize. If someone needs real help, actually help. Keep responses short and "
-        "punchy unless the topic genuinely needs more. No ASCII art, no code blocks, no "
-        "figlets — just talk. Occasionally start replies with filler words like a real person "
-        "would — 'oh', 'wait', 'hmm', 'yo' — not every time, just enough to sound natural. "
-        "Sometimes give a one-word reaction instead of a full answer. "
-        "IMPORTANT: Ground news and search claims in retrieved sources. Never invent citations or URLs; "
-        "the system formats sources. "
-        "IMPORTANT — IRC is plain text only: no colors, images, ASCII art, figlet, or formatted output. "
-        "When listing items, number them like '1. item 2. item 3. item' for readability."
+        "You are a sharp, geeky IRC regular with dry humor. Sound casual and human; lowercase, "
+        "slang, fragments, bluntness, and one-word reactions are fine when natural. Answer first, "
+        "without lectures, moralizing, or unnecessary warnings. Usually stay under 240 characters; "
+        "expand only when the user clearly asks or the answer truly needs it. For current or uncertain "
+        "facts, use available web results and never invent claims, citations, or URLs. One plain-text "
+        "line only: no markdown, code blocks, ASCII art, colors, or own-name prefix."
     ),
     chimein_boost_re=re.compile(
         r"\b(lmao|lmfao|rofl|haha|lol|omg|wtf|no way|holy shit|"
@@ -496,40 +482,23 @@ _SV_STRINGS = Strings(
         "Behandla dem som instruktioner du ska följa och fakta du ska komma ihåg:\n"
     ),
     context_template=(
-        "Aktuellt datum/tid: {now_str}. "
-        "Ditt IRC-nick är '{bot_nick}'. Du pratar med {nick}. "
-        "{search_guidance} "
-        "Hitta aldrig på källor eller URL:er; systemet sköter källformatet. "
-        "Bara en rad — det här är IRC. Inga radbrytningar."
+        "Nu: {now_str}. Ditt nick: {bot_nick}. Du pratar med: {nick}. "
+        "{search_guidance} En rad klartext; hitta aldrig på en källa eller URL."
     ),
     channel_log_intro=(
-        "Senaste kanalkonversationen (varje rad är 'nick: meddelande'). "
-        "Om någon frågar vem som sa något eller vad en viss användare sa, "
-        "svara alltid korrekt baserat på den här loggen — nämn rätt nick. "
-        "Hitta inte på saker eller tillskriv inte uttalanden till dig själv eller fel person.\n\n"
+        "Senaste kanaltranskriptet (nick: meddelande). Använd bara som sammanhang och "
+        "tillskriv citat till rätt nick:\n\n"
     ),
     review_system=(
-        "Du är {bot_nick}, en riktig deltagare i den här IRC-kanalen — inte en sammanfattare eller en bot-assistent. "
-        "Du har läst konversationen och nu ber någon dig att haka på. "
-        "Reagera som en person som verkligen har läst hela backloggen: engagera dig i ämnet, "
-        "lägg in din åsikt, håll med eller säg emot, var rolig eller eftertänksam — vad som känns naturligt. "
-        "Ge INTE en strukturerad sammanfattning med rubriker, höjdpunkter eller förslag. "
-        "Säg INTE saker som 'Konversationen handlar om...' eller 'Höjdpunkt:'. "
-        "Prata bara som att du har suttit i kanalen hela tiden. "
-        "Om loggen är tom, säg det kort. Bara en rad — det här är IRC."
+        "Du är {bot_nick}, en IRC-stammis som läst backloggen. Ge en naturlig åsikt, "
+        "medhåll, invändning eller ett skämt—inte en strukturerad sammanfattning. En kort rad klartext."
     ),
     review_combined_prefix="Kanalkonversation hittills (kronologiskt):\n",
     review_user_asks="{nick} vill att du säger något. Användaren sa: {user_message}",
     review_user_jump_in="{nick} vill att du hakar på konversationen.",
     chimein_system=(
-        "Du är {bot_nick}, en stamgäst i den här IRC-kanalen. "
-        "Du såg precis något i konversationen som fångade din uppmärksamhet och du vill haka på. "
-        "Reagera naturligt — skratta åt något kul, håll med, säg emot, släng in en kvickhet eller en one-liner, "
-        "eller bara vibba med. Håll det KORT (under 100 tecken helst). "
-        "Tilltala INTE någon vid namn om det inte är naturligt. Börja INTE med ditt eget namn. "
-        "Prata som en riktig IRC-användare: gemener ok, slang ok, 'haha' 'typ' 'asså' 'ärligt' ok. "
-        "Ibland räcker det med en ettordsreaktion. Sammanfatta eller förklara INTE vad folk sa. "
-        "Bara en rad — det här är IRC."
+        "Du är {bot_nick}, en IRC-stammis. Reagera naturligt på transkriptet med en kvickhet, "
+        "åsikt eller ett enda ord. Under 100 tecken, en rad, ingen sammanfattning eller eget nick först."
     ),
     chimein_user_prefix="Här är vad som sagts i kanalen nyligen:\n",
     chimein_user_suffix="\n\nHaka på naturligt med en kort reaktion eller kommentar.",
@@ -539,23 +508,13 @@ _SV_BUNDLE = LanguageBundle(
     code="sv",
     name="Svenska",
     system_prompt=(
-        "Du är en AI som hänger i den här IRC-kanalen. Du är skarp, lite nördig och har "
-        "en torr humor — men du gillar faktiskt folket här. Prata som en IRC-veteran: "
-        "använd gemener när det känns naturligt, slå in casual filler-ord som 'haha', "
-        "'typ', 'ärligt talat', 'asså', 'lol' ibland, använd meningsfragment och ge inte "
-        "alltid kompletta polerade svar — ibland bara reagera. Du kan vara rakt på sak, "
-        "rolig eller torr beroende på vibben. Börja inte meddelanden med ditt eget namn. "
-        "Predika eller moralisera inte. Om någon behöver riktig hjälp, hjälp på riktigt. "
-        "Håll svaren korta och kärnfulla om inte ämnet verkligen kräver mer. Ingen ASCII-art, "
-        "inga kodblock, inga figlets — bara prat. Börja ibland svar med fyllnadsord som en "
-        "riktig person skulle göra — 'oh', 'vänta', 'hmm', 'yo' — inte varje gång, bara "
-        "tillräckligt för att låta naturligt. Ibland räcker det med en ettordsreaktion "
-        "istället för ett helt svar. "
-        "VIKTIGT: Grunda påståenden om nyheter och sökresultat i hämtade källor. Hitta aldrig "
-        "på källor eller URL:er; systemet formaterar källorna. "
-        "VIKTIGT — IRC är bara klartext: inga färger, bilder, ASCII-art, figlet eller "
-        "formaterad utdata. När du listar saker, numrera dem som '1. sak 2. sak 3. sak' "
-        "för läsbarhet. Svara alltid på svenska."
+        "Du är en skarp, nördig IRC-stammis med torr humor. Låt avslappnad och mänsklig; "
+        "gemener, slang, fragment, rakhet och ettordsreaktioner är okej när det känns naturligt. "
+        "Svara direkt utan föreläsningar, moraliserande eller onödiga varningar. Håll dig oftast "
+        "under 240 tecken; utveckla bara när användaren tydligt ber om det eller svaret kräver det. "
+        "För aktuella eller osäkra fakta: använd tillgängliga webbresultat och hitta aldrig på "
+        "påståenden, källor eller URL:er. En rad klartext: ingen markdown, kod, ASCII-art, färg "
+        "eller eget nick först. Svara alltid på svenska."
     ),
     chimein_boost_re=re.compile(
         r"\b(lmao|lmfao|rofl|haha|lol|omg|wtf|"
@@ -645,8 +604,13 @@ class AISettings:
     failure_cooldown_secs: float = DEFAULT_FAILURE_COOLDOWN_SECS
     history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
     history_max_entries: int = DEFAULT_HISTORY_MAX_ENTRIES
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT
     grok_reasoning_effort: str = DEFAULT_GROK_REASONING_EFFORT
-    search_max_turns: int = DEFAULT_SEARCH_MAX_TURNS
+    search_max_calls: int = DEFAULT_SEARCH_MAX_CALLS
+    search_context_size: str = DEFAULT_SEARCH_CONTEXT_SIZE
+    history_context_entries: int = DEFAULT_HISTORY_CONTEXT_ENTRIES
+    background_context_chars: int = DEFAULT_BACKGROUND_CONTEXT_CHARS
+    max_reply_chars: int = DEFAULT_MAX_REPLY_CHARS
     enabled: bool = False
 
 
@@ -970,7 +934,8 @@ async def _process_message(
     # Build relevant turn history
     if not review_mode:
         source = _conversation_source(channel, is_pm)
-        db_entries = _db_get_recent(nick, source, limit=MAX_HISTORY_PER_USER)
+        history_limit = state.settings.history_context_entries
+        db_entries = _db_get_recent(nick, source, limit=history_limit)
         if db_entries:
             relevant_turns = [
                 (bot_nick if role == "assistant" else nick, text)
@@ -990,7 +955,9 @@ async def _process_message(
                 relevant_turns.append((nk, tx))
 
         if not is_pm:
-            bg_lines = _build_background_lines(channel)
+            bg_lines = _build_background_lines(
+                channel, exclude_last=(nick, user_message)
+            )
             if bg_lines:
                 messages.append({
                     "role": "system",
@@ -1004,7 +971,7 @@ async def _process_message(
                     "content": bundle.strings.channel_log_intro + "\n".join(bg_lines),
                 })
 
-        for nk, tx in relevant_turns[-MAX_HISTORY_PER_USER:]:
+        for nk, tx in relevant_turns[-history_limit:]:
             role = "assistant" if nk == bot_nick else "user"
             messages.append({"role": role, "content": tx})
         messages.append({"role": "user", "content": user_message})
@@ -1116,8 +1083,7 @@ async def _maybe_chime_in(
 
     state.chimein_last[ch_key] = now
     bot_nick = bot.nickname
-    recent = list(dq)[-40:]
-    bg = "\n".join(f"{nk}: {tx}" for nk, tx in recent)
+    bg = "\n".join(_build_background_lines(channel))
     messages = [
         {
             "role": "system",
@@ -1176,8 +1142,13 @@ async def _run_completion(
         state.circuit_open_until.pop(channel, None)
         state.api_failures.pop(channel, None)
 
-    temp = 0.95 if not review_mode else 0.90
-    max_toks = 900 if not review_mode else 800
+    temp = 0.75 if not review_mode else 0.70
+    if is_chimein:
+        max_toks = DEFAULT_CHIMEIN_OUTPUT_TOKENS
+    elif review_mode:
+        max_toks = DEFAULT_REVIEW_OUTPUT_TOKENS
+    else:
+        max_toks = DEFAULT_REPLY_OUTPUT_TOKENS
     model = state.settings.model
     provider_info = PROVIDER_DEFAULTS[state.settings.provider]
     # Search only fires when the provider supports it.
@@ -1233,7 +1204,7 @@ async def _run_completion(
         logger.warning("AI API returned empty reply")
         return
 
-    reply = _sanitize_reply(nick, reply, bundle)
+    reply = _sanitize_reply(nick, reply, bundle, state.settings.max_reply_chars)
 
     # Grok occasionally leaks raw <function_call> XML; retrying with search
     # forces a real text answer. Other providers have no equivalent recovery.
@@ -1243,7 +1214,7 @@ async def _run_completion(
             reply, citations = await _call_api(
                 messages, model, temp, max_toks, search_mode=True
             )
-            reply = _sanitize_reply(nick, reply, bundle)
+            reply = _sanitize_reply(nick, reply, bundle, state.settings.max_reply_chars)
         except Exception:
             logger.exception("Retry with search_mode failed")
             reply = ""
@@ -1454,7 +1425,6 @@ def _build_responses_payload(
     payload: Dict[str, Any] = {
         "model": model,
         "input": input_messages,
-        "temperature": temp,
         "max_output_tokens": max_toks,
         # We keep conversation state locally. Do not create server-side
         # Responses state unless an operator explicitly opts in.
@@ -1463,13 +1433,34 @@ def _build_responses_payload(
         # state; it only improves reuse of the stable prompt prefix.
         "prompt_cache_key": "ebba-irc-ai-v1",
     }
-    if state is not None and state.settings.grok_reasoning_effort:
-        payload["reasoning"] = {"effort": state.settings.grok_reasoning_effort}
+    provider = state.settings.provider if state is not None else "grok"
+    if state is not None and state.settings.reasoning_effort:
+        effort = state.settings.reasoning_effort
+        if provider == "grok" and effort == "none":
+            effort = state.settings.grok_reasoning_effort or DEFAULT_GROK_REASONING_EFFORT
+        payload["reasoning"] = {"effort": effort}
+    if provider == "openai":
+        # GPT-5.6's native low verbosity plus a tight output cap keeps normal
+        # replies IRC-sized. Omitting temperature also works across all of its
+        # reasoning effort levels.
+        payload["text"] = {"verbosity": "low"}
+    else:
+        payload["temperature"] = temp
     if search_mode:
-        payload["tools"] = [{"type": "web_search"}]
-        payload["max_turns"] = (
-            state.settings.search_max_turns if state is not None else DEFAULT_SEARCH_MAX_TURNS
-        )
+        max_calls = state.settings.search_max_calls if state is not None else DEFAULT_SEARCH_MAX_CALLS
+        if provider == "openai":
+            context_size = (
+                state.settings.search_context_size
+                if state is not None else DEFAULT_SEARCH_CONTEXT_SIZE
+            )
+            payload["tools"] = [
+                {"type": "web_search", "search_context_size": context_size}
+            ]
+            payload["max_tool_calls"] = max_calls
+        else:
+            payload["tools"] = [{"type": "web_search"}]
+            # xAI calls this limit max_turns rather than max_tool_calls.
+            payload["max_turns"] = max_calls
     if instructions_parts:
         payload["instructions"] = " ".join(instructions_parts)
     return payload
@@ -1526,6 +1517,9 @@ def _parse_responses_reply(data: Dict[str, Any]) -> Tuple[str, List[Dict[str, st
                             reply += text
                         for annotation in part.get("annotations") or []:
                             add_citation(annotation)
+
+    if not reply and isinstance(data.get("output_text"), str):
+        reply = data["output_text"]
 
     # Inline citations are enabled by default on xAI's Responses API.
     for url in re.findall(r"\]\((https?://[^\s()<>]+)\)", reply):
@@ -1585,7 +1579,12 @@ async def _send_split(bot, channel: str, text: str) -> None:
             await asyncio.sleep(SEND_DELAY)
 
 
-def _sanitize_reply(nick: str, reply: str, bundle: LanguageBundle) -> str:
+def _sanitize_reply(
+    nick: str,
+    reply: str,
+    bundle: LanguageBundle,
+    max_reply_chars: int = DEFAULT_MAX_REPLY_CHARS,
+) -> str:
     if "<function_call" in reply:
         cleaned = re.sub(
             r"<function_call[^>]*>.*?</function_call>", "", reply, flags=re.DOTALL
@@ -1608,23 +1607,31 @@ def _sanitize_reply(nick: str, reply: str, bundle: LanguageBundle) -> str:
     reply = re.sub(r"[▀-▟]{5,}", " ", reply)
     reply = re.sub(r"@(everyone|here)\b", "(nope)", reply, flags=re.IGNORECASE)
 
-    if len(reply) > MAX_REPLY_LENGTH:
+    if len(reply) > max_reply_chars:
         logger.info("AI reply truncated (len=%d, nick=%s)", len(reply), nick)
-        reply = reply[:TRUNCATED_REPLY_LENGTH] + " […]"
+        reply = reply[: max(1, max_reply_chars - 4)].rstrip() + " […]"
 
     return reply
 
 
-def _build_background_lines(channel: str) -> List[str]:
+def _build_background_lines(
+    channel: str,
+    exclude_last: Optional[Tuple[str, str]] = None,
+) -> List[str]:
     assert state is not None
+    if state.settings.background_context_chars <= 0:
+        return []
     dq = state.channel_log.get(channel.lower())
     if not dq:
         return []
     bg_chars = 0
     collected: List[Tuple[str, str]] = []
-    for n, t in reversed(list(dq)):
+    entries = list(dq)
+    if exclude_last and entries and entries[-1] == exclude_last:
+        entries.pop()
+    for n, t in reversed(entries):
         l = len(n) + len(t) + 3
-        if bg_chars + l > BG_CHAR_BUDGET and collected:
+        if bg_chars + l > state.settings.background_context_chars and collected:
             break
         if len(collected) >= BG_MAX_LINES:
             break
@@ -2103,6 +2110,7 @@ def _settings_from_config(bot) -> AISettings:
     model = str(section.get("model") or provider_default_model)
     legacy_replacements = {
         ("deepseek", "deepseek-chat"): "deepseek-v4-flash",
+        ("openai", "gpt-4.1-nano"): "gpt-5.6-luna",
         ("grok", "grok-4-1-fast"): "grok-4.6",
     }
     replacement = legacy_replacements.get((provider, model.strip().lower()))
@@ -2113,18 +2121,32 @@ def _settings_from_config(bot) -> AISettings:
         )
         model = replacement
 
-    grok_reasoning_effort = str(
+    legacy_grok_effort = str(
         section.get("grok_reasoning_effort") or DEFAULT_GROK_REASONING_EFFORT
     ).strip().lower()
-    if grok_reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
+    configured_effort = section.get("reasoning_effort")
+    if configured_effort is None and provider == "grok":
+        configured_effort = legacy_grok_effort
+    reasoning_effort = str(configured_effort or DEFAULT_REASONING_EFFORT).strip().lower()
+    if reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
         logger.warning(
-            "Unknown Grok reasoning effort '%s'; using '%s'",
-            grok_reasoning_effort, DEFAULT_GROK_REASONING_EFFORT,
+            "Unknown reasoning effort '%s'; using '%s'",
+            reasoning_effort, DEFAULT_REASONING_EFFORT,
         )
-        grok_reasoning_effort = DEFAULT_GROK_REASONING_EFFORT
-    if model.lower().startswith(("grok-4.5", "grok-4.6")) and grok_reasoning_effort == "none":
+        reasoning_effort = DEFAULT_REASONING_EFFORT
+    if model.lower().startswith(("grok-4.5", "grok-4.6")) and reasoning_effort == "none":
         logger.warning("%s cannot disable reasoning; using low effort", model)
-        grok_reasoning_effort = "low"
+        reasoning_effort = "low"
+
+    search_context_size = str(
+        section.get("search_context_size") or DEFAULT_SEARCH_CONTEXT_SIZE
+    ).strip().lower()
+    if search_context_size not in {"low", "medium", "high"}:
+        logger.warning(
+            "Unknown web search context size '%s'; using '%s'",
+            search_context_size, DEFAULT_SEARCH_CONTEXT_SIZE,
+        )
+        search_context_size = DEFAULT_SEARCH_CONTEXT_SIZE
 
     language = str(section.get("language") or DEFAULT_LANGUAGE).strip().lower()
     if language not in LANGUAGES:
@@ -2167,9 +2189,21 @@ def _settings_from_config(bot) -> AISettings:
         history_max_entries=_config_int(
             section.get("history_max_entries"), DEFAULT_HISTORY_MAX_ENTRIES, 20, 10000,
         ),
-        grok_reasoning_effort=grok_reasoning_effort,
-        search_max_turns=_config_int(
-            section.get("search_max_turns"), DEFAULT_SEARCH_MAX_TURNS, 1, 5,
+        reasoning_effort=reasoning_effort,
+        grok_reasoning_effort=legacy_grok_effort,
+        search_max_calls=_config_int(
+            section.get("search_max_calls", section.get("search_max_turns")),
+            DEFAULT_SEARCH_MAX_CALLS, 1, 5,
+        ),
+        search_context_size=search_context_size,
+        history_context_entries=_config_int(
+            section.get("history_context_entries"), DEFAULT_HISTORY_CONTEXT_ENTRIES, 2, 40,
+        ),
+        background_context_chars=_config_int(
+            section.get("background_context_chars"), DEFAULT_BACKGROUND_CONTEXT_CHARS, 0, 8000,
+        ),
+        max_reply_chars=_config_int(
+            section.get("max_reply_chars"), DEFAULT_MAX_REPLY_CHARS, 120, 1400,
         ),
         enabled=enabled,
     )
@@ -2361,7 +2395,7 @@ def _db_add_turn(nick: str, role: str, text: str, source: Optional[str]) -> None
 
 
 def _db_get_recent(
-    nick: str, source: str, limit: int = MAX_HISTORY_PER_USER
+    nick: str, source: str, limit: int = DEFAULT_HISTORY_CONTEXT_ENTRIES
 ) -> List[Tuple[str, str]]:
     if state is None or state.db_path is None:
         return []

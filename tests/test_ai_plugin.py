@@ -100,9 +100,54 @@ class AIPluginDatabaseTests(unittest.TestCase):
         self.assertIs(payload["store"], False)
         self.assertEqual(payload["tools"], [{"type": "web_search"}])
         self.assertEqual(payload["reasoning"], {"effort": "low"})
-        self.assertEqual(payload["max_turns"], 2)
+        self.assertEqual(payload["max_turns"], 1)
         self.assertEqual(payload["prompt_cache_key"], "ebba-irc-ai-v1")
         self.assertEqual(payload["instructions"], "Be concise")
+
+    def test_openai_payload_is_cost_bounded(self):
+        ai.state.settings = ai.AISettings(
+            api_key="test",
+            provider="openai",
+            model="gpt-5.6-luna",
+            reasoning_effort="none",
+            search_max_calls=1,
+            search_context_size="low",
+            enabled=True,
+        )
+
+        payload = ai._build_responses_payload(
+            [
+                {"role": "system", "content": "Be concise"},
+                {"role": "user", "content": "latest news"},
+            ],
+            "gpt-5.6-luna",
+            0.75,
+            180,
+            True,
+        )
+
+        self.assertEqual(payload["reasoning"], {"effort": "none"})
+        self.assertEqual(payload["text"], {"verbosity": "low"})
+        self.assertEqual(
+            payload["tools"],
+            [{"type": "web_search", "search_context_size": "low"}],
+        )
+        self.assertEqual(payload["max_tool_calls"], 1)
+        self.assertEqual(payload["max_output_tokens"], 180)
+        self.assertNotIn("temperature", payload)
+        self.assertNotIn("max_turns", payload)
+
+    def test_background_context_excludes_triggering_message(self):
+        ai.state.settings.background_context_chars = 1200
+        ai.state.channel_log["#a"] = ai.deque(
+            [("sam", "earlier context"), ("alex", "ebba: latest news?")]
+        )
+
+        lines = ai._build_background_lines(
+            "#a", exclude_last=("alex", "ebba: latest news?")
+        )
+
+        self.assertEqual(lines, ["sam: earlier context"])
 
     def test_responses_parser_uses_structured_citations(self):
         data = {
@@ -205,8 +250,28 @@ class AIPluginDatabaseTests(unittest.TestCase):
             settings = ai._settings_from_config(object())
 
         self.assertEqual(settings.model, "grok-4.6")
+        self.assertEqual(settings.reasoning_effort, "low")
         self.assertEqual(settings.grok_reasoning_effort, "low")
         self.assertEqual(settings.language, "sv")
+
+    def test_blank_openai_model_uses_cost_optimized_defaults(self):
+        fake_utils = types.ModuleType("core.utils")
+        fake_utils.get_plugin_config = lambda bot, name: {
+            "provider": "openai",
+            "model": "",
+            "api_key": "test",
+        }
+
+        with mock.patch.dict(sys.modules, {"core.utils": fake_utils}):
+            settings = ai._settings_from_config(object())
+
+        self.assertEqual(settings.model, "gpt-5.6-luna")
+        self.assertEqual(settings.reasoning_effort, "none")
+        self.assertEqual(settings.search_max_calls, 1)
+        self.assertEqual(settings.search_context_size, "low")
+        self.assertEqual(settings.history_context_entries, 8)
+        self.assertEqual(settings.background_context_chars, 1200)
+        self.assertEqual(settings.max_reply_chars, 420)
 
     def test_generic_swedish_questions_do_not_trigger_web_search(self):
         for message in (
@@ -311,7 +376,7 @@ class AIPluginAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(captured["json"]["store"], False)
         self.assertEqual(captured["json"]["tools"], [{"type": "web_search"}])
         self.assertEqual(captured["json"]["reasoning"], {"effort": "low"})
-        self.assertEqual(captured["json"]["max_turns"], 2)
+        self.assertEqual(captured["json"]["max_turns"], 1)
 
     async def test_split_output_stays_within_irc_byte_limit(self):
         class Bot:
