@@ -1,12 +1,19 @@
 import asyncio
 import base64
 import contextlib
+import hmac
 import logging
 import signal
 import ssl
 from asyncio import StreamReader, StreamWriter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
+
+# A connection that stayed registered at least this long is considered healthy,
+# so the reconnect backoff starts over from reconnect_delay_secs.
+STABLE_CONNECTION_SECS = 60
+SEND_QUEUE_MAXSIZE = 100
 
 import yaml
 
@@ -60,14 +67,23 @@ class OwnerRecord:
 class IRCClient:
     """Asyncio based IRC client with plugin dispatch."""
 
-    def __init__(self, config: Dict[str, Any], plugin_manager: PluginManager) -> None:
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        plugin_manager: PluginManager,
+        env_overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.config = config
+        # Values that came from environment variables. They are re-applied
+        # whenever the config is reloaded from disk, which doesn't contain them.
+        self._env_overrides = dict(env_overrides or {})
         self.plugin_manager = plugin_manager
         self.logger = logging.getLogger("IRCClient")
         self.server = str(config["server"])
         self.port = int(config["port"])
         self.use_tls = bool(config.get("use_tls", False))
         self.nickname = str(config["nickname"])
+        self._configured_nick = self.nickname
         self.username = str(config["username"])
         self.realname = str(config["realname"])
         self.channels = list(config.get("channels", []))
@@ -79,6 +95,9 @@ class IRCClient:
         self.request_timeout = int(config.get("request_timeout_secs", 10))
         self.max_backoff = int(config.get("max_reconnect_delay_secs", 60))
         self.join_delay_secs = float(config.get("join_delay_secs", 0.4))
+        # Send a PING after this much silence from the server; drop the
+        # connection if the silence lasts twice as long.
+        self.ping_timeout = max(10.0, float(config.get("ping_timeout_secs", 120)))
         rate_count = int(config.get("privmsg_rate_count", 4))
         rate_window = float(config.get("privmsg_rate_window_secs", 2.0))
         self._rate_limiter = AsyncRateLimiter(rate_count, rate_window)
@@ -100,9 +119,17 @@ class IRCClient:
 
         self.reader: Optional[StreamReader] = None
         self.writer: Optional[StreamWriter] = None
-        self._send_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
+        self._send_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=SEND_QUEUE_MAXSIZE)
         self._writer_task: Optional[asyncio.Task] = None
         self._reader_task: Optional[asyncio.Task] = None
+        self._keepalive_task: Optional[asyncio.Task] = None
+        self._join_task: Optional[asyncio.Task] = None
+        self._background_tasks: Set[asyncio.Task] = set()
+        self._registered = False
+        self._registered_at: Optional[float] = None
+        self._last_rx: float = 0.0
+        # Single worker so config writes land in the order they were issued.
+        self._config_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="config-writer")
         self._stop_event = asyncio.Event()
         self._signals_registered = False
         self._last_connect_time: Optional[float] = None
@@ -110,28 +137,47 @@ class IRCClient:
 
     async def start(self) -> None:
         """Attempt to connect and stay connected with exponential backoff."""
-        backoff = max(self.reconnect_delay, 1)
+        base_delay = max(self.reconnect_delay, 1)
+        backoff = base_delay
         while not self._stop_event.is_set():
             try:
                 await self._connect_once()
-                backoff = max(self.reconnect_delay, 1)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self.logger.exception("Connection error: %s", exc)
-                await self._cleanup_connection()
-                if self._stop_event.is_set():
-                    break
-                self.logger.info("Reconnecting in %s seconds", backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, self.max_backoff)
+            await self._cleanup_connection()
+            if self._stop_event.is_set():
+                break
 
-    async def stop(self) -> None:
+            # Always wait before reconnecting, even after a clean server-side
+            # close, so a server that drops us right away isn't hammered.
+            now = asyncio.get_running_loop().time()
+            if self._registered_at is not None and now - self._registered_at >= STABLE_CONNECTION_SECS:
+                backoff = max(self.reconnect_delay, 1)
+            self.logger.info("Reconnecting in %s seconds", backoff)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop_event.wait(), timeout=backoff)
+            backoff = min(backoff * 2, max(self.max_backoff, 1))
+
+    async def stop(self, reason: str = "Shutting down") -> None:
         self._stop_event.set()
+        writer = self.writer
+        if writer is not None and not writer.is_closing():
+            with contextlib.suppress(Exception):
+                writer.write(f"QUIT :{reason}\r\n".encode("utf-8"))
+                await asyncio.wait_for(writer.drain(), timeout=2)
         await self._cleanup_connection()
+        self._config_executor.shutdown(wait=True)
 
     async def _connect_once(self) -> None:
         ssl_context = ssl.create_default_context() if self.use_tls else None
+        # Fresh state per connection: try the configured nick again and drop
+        # anything queued while we were disconnected.
+        self.nickname = self._configured_nick
+        self._registered = False
+        self._registered_at = None
+        self._send_queue = asyncio.Queue(maxsize=SEND_QUEUE_MAXSIZE)
         self.logger.info("Connecting to %s:%s (TLS=%s)", self.server, self.port, self.use_tls)
         self.reader, self.writer = await asyncio.wait_for(
             asyncio.open_connection(
@@ -142,14 +188,15 @@ class IRCClient:
             ),
             timeout=30,
         )
-        self._last_connect_time = asyncio.get_running_loop().time()
+        loop = asyncio.get_running_loop()
+        self._last_connect_time = loop.time()
+        self._last_rx = loop.time()
         await self._register()
 
-        loop = asyncio.get_running_loop()
         if not self._signals_registered:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 try:
-                    loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(self.stop()))
+                    loop.add_signal_handler(sig, lambda: self._spawn_background(self.stop()))
                 except NotImplementedError:
                     # Not available on Windows event loop
                     pass
@@ -157,9 +204,17 @@ class IRCClient:
 
         self._writer_task = asyncio.create_task(self._writer_loop(), name="irc-writer")
         self._reader_task = asyncio.create_task(self._reader_loop(), name="irc-reader")
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop(), name="irc-keepalive")
 
-        await self._reader_task
-        await self._cleanup_connection()
+        # If either side of the connection dies, tear the whole thing down
+        # rather than leaving a reader with no writer (or vice versa).
+        done, _ = await asyncio.wait(
+            {self._writer_task, self._reader_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in done:
+            if not task.cancelled() and task.exception() is not None:
+                exc = task.exception()
+                self.logger.error("%s failed: %s", task.get_name(), exc, exc_info=exc)
 
     async def _register(self) -> None:
         if self.sasl_enabled:
@@ -172,9 +227,13 @@ class IRCClient:
     async def _handle_cap(self, message: IRCMessage) -> None:
         # Format: CAP <nick/*> <LS|ACK|NAK> [*] :<caps>
         subcommand = message.params[1] if len(message.params) >= 2 else ""
+        caps = message.trailing
+        if caps is None:
+            # A single capability may be sent without the ':' marker.
+            caps = message.params[-1] if len(message.params) >= 3 and message.params[-1] != "*" else ""
         if subcommand == "LS":
             more_coming = len(message.params) >= 3 and message.params[2] == "*"
-            self._cap_ls_buffer += " " + (message.trailing or "")
+            self._cap_ls_buffer += " " + caps
             if more_coming:
                 return
             available = set(self._cap_ls_buffer.split())
@@ -186,7 +245,7 @@ class IRCClient:
                     self.logger.warning("Server does not advertise SASL; continuing without it")
                 await self.send_raw("CAP END")
         elif subcommand == "ACK":
-            acked = set((message.trailing or "").split())
+            acked = set(caps.split())
             if "sasl" in acked:
                 await self.send_raw("AUTHENTICATE PLAIN")
             else:
@@ -215,66 +274,154 @@ class IRCClient:
         await self.send_raw("CAP END")
 
     async def _cleanup_connection(self) -> None:
-        if self._writer_task:
-            self._writer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._writer_task
-        if self._reader_task:
-            self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._reader_task
+        self._registered = False
+        for task in (self._join_task, self._keepalive_task, self._writer_task, self._reader_task):
+            if task is None or task is asyncio.current_task():
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
-        if self.writer:
+        writer = self.writer
+        if writer:
             try:
-                self.writer.close()
-                await self.writer.wait_closed()
+                writer.close()
+                # wait_closed() can hang on a dead TLS peer; don't let it stall reconnects.
+                await asyncio.wait_for(writer.wait_closed(), timeout=5)
             except Exception:
                 pass
 
+        if writer is not None:
+            self._last_disconnect_time = asyncio.get_running_loop().time()
         self.reader = None
         self.writer = None
         self._writer_task = None
         self._reader_task = None
-        self._send_queue = asyncio.Queue(maxsize=100)
-        self._last_disconnect_time = asyncio.get_running_loop().time()
+        self._keepalive_task = None
+        self._join_task = None
+
+    def _spawn_background(self, coro) -> asyncio.Task:
+        # Keep a strong reference so the task isn't garbage-collected mid-run.
+        task = asyncio.get_running_loop().create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_task_done)
+        return task
+
+    def _background_task_done(self, task: asyncio.Task) -> None:
+        self._background_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            exc = task.exception()
+            self.logger.error("Background task failed: %s", exc, exc_info=exc)
+
+    async def _keepalive_loop(self) -> None:
+        """Detect half-open connections that would otherwise hang readline() forever."""
+        loop = asyncio.get_running_loop()
+        ping_sent = False
+        while True:
+            await asyncio.sleep(min(self.ping_timeout / 4, 30))
+            silence = loop.time() - self._last_rx
+            if silence < self.ping_timeout:
+                ping_sent = False
+                continue
+            if silence >= self.ping_timeout * 2:
+                self.logger.warning(
+                    "No data from server for %ds; dropping connection", int(silence)
+                )
+                if self.writer is not None:
+                    # abort() makes readline() return EOF, ending the reader loop.
+                    self.writer.transport.abort()
+                return
+            if not ping_sent:
+                await self.send_raw(f"PING :{self.server}")
+                ping_sent = True
 
     async def _writer_loop(self) -> None:
-        assert self.writer is not None
+        writer = self.writer
+        assert writer is not None
+        queue = self._send_queue
         while not self._stop_event.is_set():
-            message = await self._send_queue.get()
-            self.writer.write(f"{message}\r\n".encode("utf-8"))
+            message = await queue.get()
+            writer.write(f"{message}\r\n".encode("utf-8"))
             try:
-                await self.writer.drain()
+                await writer.drain()
             except ConnectionError:
                 self.logger.warning("Connection lost during write")
                 break
 
     async def _reader_loop(self) -> None:
-        assert self.reader is not None
+        reader = self.reader
+        assert reader is not None
+        loop = asyncio.get_running_loop()
+        debug = self.logger.isEnabledFor(logging.DEBUG)
         while not self._stop_event.is_set():
-            raw = await self.reader.readline()
+            raw = await reader.readline()
             if not raw:
                 self.logger.warning("Server closed the connection")
                 break
-            line = raw.decode("utf-8", errors="ignore").strip("\r\n")
+            self._last_rx = loop.time()
+            line = raw.decode("utf-8", errors="replace").strip("\r\n")
             if not line:
                 continue
-            self.logger.debug("< %s", line)
-            message = parse_irc_message(line)
-            await self._handle_message(message)
+            if debug:
+                self.logger.debug("< %s", line)
+            # One bad line (or a bug in a handler) must not kill the connection.
+            try:
+                await self._handle_message(parse_irc_message(line))
+            except Exception:
+                self.logger.exception("Error handling line: %s", line[:200])
 
     async def send_raw(self, message: str) -> None:
+        # A CR/LF/NUL in plugin output (page titles, API responses, AI replies)
+        # would otherwise let the text inject arbitrary IRC commands.
+        for bad in ("\r", "\n", "\0"):
+            if bad in message:
+                message = message.split(bad, 1)[0]
+        if not message:
+            return
         self.logger.debug("> %s", message)
         try:
             self._send_queue.put_nowait(message)
         except asyncio.QueueFull:
+            if message.startswith("PONG "):
+                # Never drop a PONG: missing one gets us disconnected.
+                writer = self.writer
+                if writer is not None and not writer.is_closing():
+                    writer.write(f"{message}\r\n".encode("utf-8"))
+                    return
             self.logger.warning("Send queue full; dropping message: %s", message[:200])
             return
 
     async def privmsg(self, target: str, text: str) -> None:
-        await self._acquire_target_rate(target)
-        await self._rate_limiter.acquire()
-        await self.send_raw(f"PRIVMSG {target} :{text}")
+        target = target.strip()
+        if not target or any(c in target for c in " \r\n\0"):
+            self.logger.warning("Refusing to send to invalid target %r", target)
+            return
+        for line in self._split_message(target, text):
+            await self._acquire_target_rate(target)
+            await self._rate_limiter.acquire()
+            if not self._registered:
+                self.logger.debug("Not connected; dropping message to %s", target)
+                return
+            await self.send_raw(f"PRIVMSG {target} :{line}")
+
+    @staticmethod
+    def _split_message(target: str, text: str) -> List[str]:
+        """Split text on newlines and into chunks the server won't truncate."""
+        limit = max(64, 510 - len(f"PRIVMSG {target} :".encode("utf-8")))
+        chunks: List[str] = []
+        for line in str(text).replace("\0", "").splitlines():
+            line = line.rstrip()
+            while len(line.encode("utf-8")) > limit:
+                # Largest prefix that fits, preferring to break at a space.
+                cut = len(line.encode("utf-8")[:limit].decode("utf-8", errors="ignore"))
+                space = line.rfind(" ", 0, cut)
+                if space > cut // 2:
+                    cut = space
+                chunks.append(line[:cut].rstrip())
+                line = line[cut:].lstrip()
+            if line:
+                chunks.append(line)
+        return chunks
 
     async def join(self, channel: str) -> None:
         await self.send_raw(f"JOIN {channel}")
@@ -289,8 +436,11 @@ class IRCClient:
 
     async def _handle_message(self, message: IRCMessage) -> None:
         if message.command == "PING":
-            payload = message.trailing or "server"
+            payload = message.trailing or (message.params[0] if message.params else "server")
             await self.send_raw(f"PONG :{payload}")
+            return
+
+        if message.command == "PONG":
             return
 
         if message.command == "CAP":
@@ -306,13 +456,21 @@ class IRCClient:
             return
 
         if message.command == "001":
-            await self._join_initial_channels()
+            self._registered = True
+            self._registered_at = asyncio.get_running_loop().time()
+            # The server tells us the nick it actually registered.
+            if message.params:
+                self.nickname = message.params[0]
+            # Joining sleeps between channels; don't stall the reader (and PONGs) on it.
+            self._join_task = asyncio.create_task(self._join_initial_channels(), name="irc-join")
             return
 
         if message.command == "433":
-            self.logger.error("Nickname %s already in use", self.nickname)
-            self.nickname = f"{self.nickname}_"
-            await self.send_raw(f"NICK {self.nickname}")
+            # Only relevant while registering; after that our nick is unchanged.
+            if not self._registered:
+                self.logger.error("Nickname %s already in use", self.nickname)
+                self.nickname = f"{self.nickname}_"
+                await self.send_raw(f"NICK {self.nickname}")
             return
 
         if message.command == "JOIN":
@@ -340,7 +498,7 @@ class IRCClient:
 
     async def _join_initial_channels(self) -> None:
         first = True
-        for channel in self.channels:
+        for channel in list(self.channels):
             if not first and self.join_delay_secs > 0:
                 try:
                     await asyncio.sleep(self.join_delay_secs)
@@ -350,6 +508,11 @@ class IRCClient:
             first = False
 
     def refresh_runtime_settings(self) -> None:
+        # A reload replaces config with the on-disk file; restore env-provided
+        # values. Channels are skipped: the file already holds the live list.
+        for key, value in self._env_overrides.items():
+            if key != "channels":
+                self.config[key] = value
         self.prefix = str(self.config.get("prefix", self.prefix))
         self.reconnect_delay = int(self.config.get("reconnect_delay_secs", self.reconnect_delay))
         self.request_timeout = int(self.config.get("request_timeout_secs", self.request_timeout))
@@ -426,18 +589,28 @@ class IRCClient:
         await self.privmsg(reply_target, "Commands: " + " | ".join(parts))
 
     async def _handle_privmsg(self, message: IRCMessage) -> None:
-        if message.prefix is None or message.trailing is None:
+        if message.prefix is None:
+            return
+        text = message.trailing
+        if text is None and len(message.params) >= 2:
+            # RFC 1459 allows a single-word message without the ':' marker.
+            text = message.params[-1]
+        if text is None:
             return
         user = message.prefix
         target = message.params[0] if message.params else ""
-        text = message.trailing
         nick = user.split("!", 1)[0]
         is_private = target.lower() == self.nickname.lower()
         channel = nick if is_private else target
         if nick.lower() in getattr(self, "ignored_nicks", set()):
             self.logger.debug("Ignoring message from %s due to ignore list", nick)
             return
-        await self._handle_builtin_commands(nick, user, channel, text, is_private)
+        if text.startswith(self.prefix):
+            # Built-ins await rate-limited replies; run them off the reader loop
+            # so a burst of commands can't delay PONGs or stall reading.
+            self._spawn_background(
+                self._handle_builtin_commands(nick, user, channel, text, is_private)
+            )
         self.plugin_manager.dispatch_message(self, user, channel, text)
 
     async def _handle_join(self, message: IRCMessage) -> None:
@@ -530,18 +703,24 @@ class IRCClient:
 
         # Update in-memory list (O(1) case-insensitive dedupe).
         lowered = channel.lower()
+        changed = False
         if lowered not in self._channels_lower:
             self.channels.append(channel)
             self._channels_lower.add(lowered)
+            changed = True
 
         channels_list = self.config.setdefault("channels", [])
         if isinstance(channels_list, list):
-            if not any(existing.lower() == lowered for existing in channels_list):
+            if not any(isinstance(existing, str) and existing.lower() == lowered for existing in channels_list):
                 channels_list.append(channel)
+                changed = True
         else:
             self.config["channels"] = [channel]
+            changed = True
 
-        self._persist_channels()
+        # Our own JOIN echo lands here too; skip the disk round-trip when nothing changed.
+        if changed:
+            self._persist_channels()
 
     def _forget_channel(self, channel: str) -> None:
         channel = channel.strip()
@@ -549,6 +728,11 @@ class IRCClient:
             return
 
         target_lower = channel.lower()
+        if target_lower not in self._channels_lower and not any(
+            isinstance(existing, str) and existing.lower() == target_lower
+            for existing in self.config.get("channels") or []
+        ):
+            return
         self.channels = [
             existing
             for existing in self.channels
@@ -596,7 +780,13 @@ class IRCClient:
         def _write() -> None:
             lock_path = config_path.with_suffix(config_path.suffix + ".lock")
             with file_lock(lock_path):
-                data = load_yaml_file(config_path)
+                try:
+                    data = load_yaml_file(config_path, strict=True)
+                except Exception:
+                    self.logger.warning(
+                        "Not updating channels: could not read %s", config_path, exc_info=True
+                    )
+                    return
 
                 existing_section = data.get("channels")
                 if isinstance(existing_section, list):
@@ -618,11 +808,14 @@ class IRCClient:
                         "Failed to write updated channels to config", exc_info=True
                     )
 
+        self._submit_config_write(_write)
+
+    def _submit_config_write(self, write) -> None:
         try:
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, _write)
+            self._config_executor.submit(write)
         except RuntimeError:
-            _write()
+            # Executor already shut down (we're stopping); write synchronously.
+            write()
 
     def _load_owner_records(self, config: Dict[str, Any]) -> Dict[str, OwnerRecord]:
         raw_entries = config.get("owner_nicks", []) or []
@@ -704,7 +897,13 @@ class IRCClient:
         def _write() -> None:
             lock_path = config_path.with_suffix(config_path.suffix + ".lock")
             with file_lock(lock_path):
-                data = load_yaml_file(config_path)
+                try:
+                    data = load_yaml_file(config_path, strict=True)
+                except Exception:
+                    self.logger.warning(
+                        "Not updating owners: could not read %s", config_path, exc_info=True
+                    )
+                    return
                 data["owner_nicks"] = serialized_snapshot
 
                 try:
@@ -714,11 +913,7 @@ class IRCClient:
                         "Failed to write updated owner records to config", exc_info=True
                     )
 
-        try:
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, _write)
-        except RuntimeError:
-            _write()
+        self._submit_config_write(_write)
 
     def _extract_owner_identity(self, prefix: str) -> tuple[Optional[str], Optional[str]]:
         if "!" not in prefix:
@@ -741,7 +936,7 @@ class IRCClient:
         if record is None or record.password is None:
             return False
 
-        if password != record.password:
+        if not hmac.compare_digest(password.encode("utf-8"), record.password.encode("utf-8")):
             return False
 
         added = record.add_host(ident_host)
@@ -916,7 +1111,6 @@ class IRCClient:
                 return
             target_channel = args[0]
             await self.join(target_channel)
-            self._remember_channel(target_channel)
             await self.privmsg(reply_target, f"Joining {target_channel}")
         elif command == "part":
             if not args:
@@ -925,5 +1119,4 @@ class IRCClient:
             target_channel = args[0]
             reason = " ".join(args[1:]) if len(args) > 1 else ""
             await self.part(target_channel, reason)
-            self._forget_channel(target_channel)
             await self.privmsg(reply_target, f"Parting {target_channel}")

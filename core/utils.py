@@ -147,16 +147,27 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise TypeError(f"Config key '{key}' must be of type str")
 
 
-def load_yaml_file(path: Path) -> Dict[str, Any]:
+def load_yaml_file(path: Path, *, strict: bool = False) -> Dict[str, Any]:
+    """Load a YAML mapping from ``path``; a missing file yields ``{}``.
+
+    With ``strict=True`` an unreadable file or a non-mapping root raises
+    instead of returning ``{}``. Read-modify-write callers must use strict
+    mode, otherwise a transient parse failure would make them overwrite the
+    whole file with only the keys they meant to change.
+    """
     if not path.exists():
         return {}
     try:
         with path.open("r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle) or {}
-        if isinstance(data, dict):
-            return data
     except Exception:
+        if strict:
+            raise
         return {}
+    if isinstance(data, dict):
+        return data
+    if strict:
+        raise ValueError(f"YAML root in {path} is not a mapping")
     return {}
 
 
@@ -214,6 +225,8 @@ def atomic_write_yaml(path: Path, data: Dict[str, Any]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(data, handle, sort_keys=False)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp_path, path)
 
 

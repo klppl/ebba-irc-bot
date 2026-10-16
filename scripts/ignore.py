@@ -152,27 +152,25 @@ def _persist_ignored(bot, ignored: Set[str]) -> None:
         return
 
     lock_path = config_path.with_suffix(config_path.suffix + ".lock")
-    with file_lock(lock_path):
-        data = load_yaml_file(config_path)
-        if not isinstance(data, dict):
-            data = {}
+    try:
+        with file_lock(lock_path):
+            data = load_yaml_file(config_path, strict=True)
 
-        plugins_section = data.setdefault("plugins", {})
-        if not isinstance(plugins_section, dict):
-            plugins_section = {}
-            data["plugins"] = plugins_section
+            plugins_section = data.setdefault("plugins", {})
+            if not isinstance(plugins_section, dict):
+                plugins_section = {}
+                data["plugins"] = plugins_section
 
-        ignore_section = plugins_section.setdefault("ignore", {})
-        if not isinstance(ignore_section, dict):
-            ignore_section = {}
-            plugins_section["ignore"] = ignore_section
+            ignore_section = plugins_section.setdefault("ignore", {})
+            if not isinstance(ignore_section, dict):
+                ignore_section = {}
+                plugins_section["ignore"] = ignore_section
 
-        ignore_section["ignored_nicks"] = sorted(ignored)
+            ignore_section["ignored_nicks"] = sorted(ignored)
 
-        try:
             atomic_write_yaml(config_path, data)
-        except Exception:
-            logger.warning("Failed to write ignore list to config file", exc_info=True)
+    except Exception:
+        logger.warning("Failed to write ignore list to config file", exc_info=True)
 
 
 def _update_runtime_config(bot, ignored: Set[str]) -> None:

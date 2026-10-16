@@ -45,15 +45,19 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     return data
 
 
-def apply_env_overrides(config: Dict[str, Any]) -> None:
+def apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply env var overrides to ``config`` and return the applied values."""
+    applied: Dict[str, Any] = {}
     for env_key, (config_key, caster) in CONFIG_ENV_MAP.items():
         value = os.environ.get(env_key)
         if value is None:
             continue
         try:
-            config[config_key] = caster(value)
+            applied[config_key] = caster(value)
         except Exception as exc:
             raise ValueError(f"Invalid value for {env_key}: {value}") from exc
+    config.update(applied)
+    return applied
 
 
 async def run_bot(config_path: Path) -> None:
@@ -63,7 +67,7 @@ async def run_bot(config_path: Path) -> None:
         plugin_dir,
         config_path=config_path,
     )
-    client = IRCClient(config, plugin_manager)
+    client = IRCClient(config, plugin_manager, env_overrides=apply_env_overrides({}))
     plugin_manager.load_all(client)
     try:
         await client.start()

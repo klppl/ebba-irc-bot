@@ -111,7 +111,7 @@ async def _handle_url_command(bot, user: str, channel: str, args: list[str], is_
         updated = False
         try:
             with file_lock(lock_path):
-                data = load_yaml_file(config_path)
+                data = load_yaml_file(config_path, strict=True)
                 # Ensure structure exists
                 plugins = data.setdefault("plugins", {})
                 extract = plugins.setdefault("extract_url", {})

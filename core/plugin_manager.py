@@ -12,6 +12,8 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import yaml
 
+from .utils import atomic_write_yaml, file_lock, load_yaml_file
+
 HANDLER_TIMEOUT_SECS = 10
 
 
@@ -99,6 +101,9 @@ class PluginManager:
             if callable(on_load):
                 on_load(bot)
         except Exception:
+            # on_load may have registered commands before failing; drop them so
+            # they don't point at a dead module and block the next load attempt.
+            self._unregister_commands_for_plugin(plugin_name)
             module_name = getattr(module, "__name__", self.module_name(plugin_name))
             sys.modules.pop(module_name, None)
             raise
@@ -143,74 +148,49 @@ class PluginManager:
         self.unload(plugin_name, bot, _persist=False)
         self.load(plugin_name, bot, _persist=False)
 
-    def dispatch_message(self, bot, user: str, channel: str, message: str) -> None:
+    def _dispatch(self, event: str, bot, *args) -> None:
         for name, module in list(self._plugins.items()):
-            handler = getattr(module, "on_message", None)
+            handler = getattr(module, event, None)
             if not callable(handler):
-                self.logger.warning(
-                    "Plugin '%s' lacks on_message handler; skipping dispatch", name
+                continue
+            if inspect.iscoroutinefunction(handler):
+                self._spawn_task(
+                    name,
+                    self._run_handler(handler, name, event, bot, *args),
+                    f"plugin-{name}-{event}",
                 )
                 continue
-            self._spawn_task(
-                name,
-                self._run_handler(handler, name, "on_message", bot, user, channel, message),
-                f"plugin-{name}-on_message",
-            )
+            # Sync handlers run inline: they block the loop either way, so a
+            # task per plugin per line would only add scheduling overhead.
+            try:
+                result = handler(bot, *args)
+            except Exception:
+                self.logger.exception("Plugin '%s' raised during %s", name, event)
+                continue
+            if inspect.iscoroutine(result):
+                self._spawn_task(
+                    name,
+                    self._run_handler(lambda r=result: r, name, event),
+                    f"plugin-{name}-{event}",
+                )
+
+    def dispatch_message(self, bot, user: str, channel: str, message: str) -> None:
+        self._dispatch("on_message", bot, user, channel, message)
 
     def dispatch_join(self, bot, user: str, channel: str) -> None:
-        for name, module in list(self._plugins.items()):
-            handler = getattr(module, "on_join", None)
-            if not callable(handler):
-                continue
-            self._spawn_task(
-                name,
-                self._run_handler(handler, name, "on_join", bot, user, channel),
-                f"plugin-{name}-on_join",
-            )
+        self._dispatch("on_join", bot, user, channel)
 
     def dispatch_part(self, bot, user: str, channel: str) -> None:
-        for name, module in list(self._plugins.items()):
-            handler = getattr(module, "on_part", None)
-            if not callable(handler):
-                continue
-            self._spawn_task(
-                name,
-                self._run_handler(handler, name, "on_part", bot, user, channel),
-                f"plugin-{name}-on_part",
-            )
+        self._dispatch("on_part", bot, user, channel)
 
     def dispatch_nick(self, bot, user: str, new_nick: str) -> None:
-        for name, module in list(self._plugins.items()):
-            handler = getattr(module, "on_nick", None)
-            if not callable(handler):
-                continue
-            self._spawn_task(
-                name,
-                self._run_handler(handler, name, "on_nick", bot, user, new_nick),
-                f"plugin-{name}-on_nick",
-            )
+        self._dispatch("on_nick", bot, user, new_nick)
 
     def dispatch_kick(self, bot, channel: str, target: str, kicker: str, reason: str) -> None:
-        for name, module in list(self._plugins.items()):
-            handler = getattr(module, "on_kick", None)
-            if not callable(handler):
-                continue
-            self._spawn_task(
-                name,
-                self._run_handler(handler, name, "on_kick", bot, channel, target, kicker, reason),
-                f"plugin-{name}-on_kick",
-            )
+        self._dispatch("on_kick", bot, channel, target, kicker, reason)
 
     def dispatch_quit(self, bot, user: str, reason: str) -> None:
-        for name, module in list(self._plugins.items()):
-            handler = getattr(module, "on_quit", None)
-            if not callable(handler):
-                continue
-            self._spawn_task(
-                name,
-                self._run_handler(handler, name, "on_quit", bot, user, reason),
-                f"plugin-{name}-on_quit",
-            )
+        self._dispatch("on_quit", bot, user, reason)
 
     def register_command(
         self,
@@ -270,12 +250,23 @@ class PluginManager:
             if inspect.iscoroutine(maybe_coro):
                 self._spawn_task(
                     spec.plugin,
-                    maybe_coro,
+                    self._run_command(maybe_coro, spec),
                     f"cmd-{spec.plugin}-{spec.name}"
                 )
         except Exception:
             self.logger.exception("Command '%s' in plugin '%s' failed", command, spec.plugin)
         return True
+
+    async def _run_command(self, coro, spec: CommandSpec) -> None:
+        # No timeout here: commands (e.g. AI calls) may legitimately run long.
+        # This wrapper only makes sure failures are logged instead of being
+        # lost as "Task exception was never retrieved".
+        try:
+            await coro
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("Command '%s' in plugin '%s' failed", spec.name, spec.plugin)
 
     def get_config_path(self) -> Optional[Path]:
         return self._config_path
@@ -388,42 +379,33 @@ class PluginManager:
     def _ensure_plugin_entry_in_file(self, plugin_name: str, enabled: bool, force: bool = False) -> None:
         if not self._config_path:
             return
+        config_path = self._config_path
+        lock_path = config_path.with_suffix(config_path.suffix + ".lock")
         try:
-            if self._config_path.exists():
-                with self._config_path.open("r", encoding="utf-8") as handle:
-                    data = yaml.safe_load(handle) or {}
-            else:
-                data = {}
-        except Exception:
-            self.logger.warning("Failed to read config file while ensuring plugin entry for '%s'", plugin_name, exc_info=True)
-            return
+            with file_lock(lock_path):
+                data = load_yaml_file(config_path, strict=True)
 
-        plugins_section = data.setdefault("plugins", {})
-        if not isinstance(plugins_section, dict):
-            plugins_section = {}
-            data["plugins"] = plugins_section
+                plugins_section = data.setdefault("plugins", {})
+                if not isinstance(plugins_section, dict):
+                    plugins_section = {}
+                    data["plugins"] = plugins_section
 
-        entry = plugins_section.setdefault(plugin_name, {})
-        if not isinstance(entry, dict):
-            entry = {}
-            plugins_section[plugin_name] = entry
+                entry = plugins_section.setdefault(plugin_name, {})
+                if not isinstance(entry, dict):
+                    entry = {}
+                    plugins_section[plugin_name] = entry
 
-        desired = bool(enabled)
-        current = entry.get("enabled") if isinstance(entry.get("enabled"), bool) else None
+                desired = bool(enabled)
+                current = entry.get("enabled") if isinstance(entry.get("enabled"), bool) else None
 
-        if force:
-            if current == desired:
-                return
-            entry["enabled"] = desired
-        else:
-            if current is not None:
-                return
-            entry["enabled"] = desired
+                if force:
+                    if current == desired:
+                        return
+                elif current is not None:
+                    return
+                entry["enabled"] = desired
 
-        try:
-            self._config_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._config_path.open("w", encoding="utf-8") as handle:
-                yaml.safe_dump(data, handle, sort_keys=False)
+                atomic_write_yaml(config_path, data)
         except Exception:
             self.logger.warning("Failed to write plugin enabled flag for '%s'", plugin_name, exc_info=True)
 

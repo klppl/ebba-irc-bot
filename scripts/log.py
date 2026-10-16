@@ -539,7 +539,7 @@ def _persist_channels_to_config(bot) -> None:
 
         lock_path = config_path.with_suffix(config_path.suffix + ".lock")
         with file_lock(lock_path):
-            data = load_yaml_file(config_path)
+            data = load_yaml_file(config_path, strict=True)
 
             plugins_section = data.setdefault("plugins", {})
             if not isinstance(plugins_section, dict):
