@@ -48,7 +48,7 @@ plugins:
 Provider defaults:
 - deepseek -> deepseek-v4-flash
 - openai   -> gpt-5.6-luna    ($0.20 / $1.20 per M tokens; built-in web search)
-- grok     -> grok-4.6
+- grok     -> grok-4.20-0309-reasoning
 
 Only `api_key` is required. It may also be supplied through `XAI_API_KEY`,
 `OPENAI_API_KEY`, or `DEEPSEEK_API_KEY` for the selected provider. Without a
@@ -115,6 +115,8 @@ DEFAULT_SEARCH_CONTEXT_SIZE = "low"
 DEFAULT_HISTORY_CONTEXT_ENTRIES = 8
 DEFAULT_BACKGROUND_CONTEXT_CHARS = 1200
 DEFAULT_MAX_REPLY_CHARS = 420
+SEARCH_CACHE_TTL_SECS = 300.0
+SEARCH_CACHE_MAX_ENTRIES = 64
 
 MAX_HISTORY_ENTRIES = 50
 REVIEW_CHAR_BUDGET = 8000
@@ -146,7 +148,7 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "supports_search": True,
     },
     "grok": {
-        "model": "grok-4.6",
+        "model": "grok-4.20-0309-reasoning",
         "url": "https://api.x.ai/v1/responses",
         "schema": "responses",
         "supports_search": True,
@@ -375,15 +377,17 @@ _EN_BUNDLE = LanguageBundle(
         re.IGNORECASE,
     ),
     search_intent_re=re.compile(
-        r"\b(search|news|latest|recent|today|yesterday|tonight|this week|this month|"
+        r"\b(search|google|look(?:ing)? up|check (?:online|the web|if|whether)|verify|"
+        r"news|latest|release date|when (?:is|does|did) .+ (?:come out|release|launch)|"
+        r"who is|who's|yesterday|this week|this month|"
         r"current events?|whats? happening|headlines?|score|results?|standings?|"
-        r"stock price|weather|forecast|breaking|update|election|poll|"
+        r"stock price|weather|forecast|breaking|election|poll|"
         r"who won|who died|who is winning|is .+ dead|did .+ happen|"
         r"price of|how much (?:is|are|does|do|did)|how bad|how severe|"
         r"drought|flood(?:ing)?|hurricane|tornado|earthquake|wildfire|"
         r"status of|what(?:'s| is) the (?:price|cost|value|status|rate)|"
-        r"worth|market|crypto|bitcoin|btc|ethereum|eth|stock|stocks|"
-        r"current(?:ly)?|right now|at the moment|"
+        r"market cap|crypto|bitcoin|btc|ethereum|eth|stock|stocks|"
+        r"currently|right now|at the moment|"
         r"economy|inflation|interest rate|"
         r"look up|find out)\b",
         re.IGNORECASE,
@@ -526,15 +530,16 @@ _SV_BUNDLE = LanguageBundle(
         re.IGNORECASE,
     ),
     search_intent_re=re.compile(
-        r"\b(sök|leta\s+upp|kolla\s+upp|ta\s+reda\s+på|"
-        r"nyheter|senaste|aktuell[at]?|idag|igår|ikväll|denna\s+vecka|denna\s+månaden?|"
+        r"\b(sök|googla|leta\s+upp|kolla\s+upp|kolla\s+(?:om|på\s+nätet)|ta\s+reda\s+på|"
+        r"när\s+(?:släpps|kommer|är)\s+.+|vem\s+är\s+(?:vd|ordförande|statsminister)|"
+        r"nyheter|senaste|aktuell[at]?|igår|denna\s+vecka|denna\s+månaden?|"
         r"aktuella\s+händelser|vad\s+händer|rubriker?|"
         r"resultat|ställning|match(?:en)?|"
         r"aktiekurs|väder|prognos|"
         r"vem\s+vann|vem\s+dog|är\s+.+\s+död|hände\s+.+|"
         r"pris\s+på|vad\s+kostar|kostnaden\s+för|hur\s+mycket\s+kostar|"
         r"torka|översvämning|orkan|tornado|jordbävning|skogsbrand|"
-        r"värde|marknad|krypto|bitcoin|btc|ethereum|eth|aktie(?:r)?|"
+        r"marknad|krypto|bitcoin|btc|ethereum|eth|aktie(?:r)?|"
         r"just\s+nu|för\s+tillfället|"
         r"ekonomi|inflation|ränta)\b",
         re.IGNORECASE,
@@ -629,6 +634,10 @@ class AIState:
     api_failures: Dict[str, int] = field(default_factory=dict)
     circuit_open_until: Dict[str, float] = field(default_factory=dict)
     citation_cache: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
+    # (provider, model, normalized question) -> (expires_at, reply, citations)
+    search_cache: Dict[Tuple[str, str, str], Tuple[float, str, List[Dict[str, str]]]] = field(
+        default_factory=dict
+    )
     context_revisions: Dict[str, int] = field(default_factory=dict)
     channel_settings_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     memories_cache: Dict[str, List[Tuple[int, str]]] = field(default_factory=dict)
@@ -927,6 +936,15 @@ async def _process_message(
             active_system_prompt = ch_cfg["prompt"]
             channel_always_search = ch_cfg.get("always_search", False)
 
+    wants_sources = bool(bundle.wants_sources_re.search(user_message))
+    # The current time is already in the prompt, so time questions never need
+    # a (paid) search.
+    search_mode = wants_sources or (
+        not time_mode
+        and (channel_always_search or bool(bundle.search_intent_re.search(user_message)))
+    )
+    search_active = search_mode and provider_info["supports_search"]
+
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": active_system_prompt},
         *_build_memory_messages(channel, bundle),
@@ -936,7 +954,7 @@ async def _process_message(
                 now_str=now_str,
                 bot_nick=bot_nick,
                 nick=nick,
-                search_guidance=_search_guidance(bundle, provider_info["supports_search"]),
+                search_guidance=_search_guidance(bundle, search_active, provider_info["supports_search"]),
             ),
         },
     ]
@@ -1042,11 +1060,6 @@ async def _process_message(
             tail = bundle.strings.review_user_jump_in.format(nick=nick)
         combined = bundle.strings.review_combined_prefix + bg + "\n\n" + tail
         messages.append({"role": "user", "content": combined})
-
-    search_mode = channel_always_search or bool(bundle.search_intent_re.search(user_message))
-    wants_sources = bool(bundle.wants_sources_re.search(user_message))
-    if wants_sources:
-        search_mode = True
 
     if state.busy.get(channel, False):
         await bot.privmsg(channel, bundle.strings.still_thinking)
@@ -1350,6 +1363,16 @@ async def _call_api(
     url = provider_info["url"]
     schema = provider_info["schema"]
 
+    cache_key: Optional[Tuple[str, str, str]] = None
+    if search_mode:
+        last_user = next(
+            (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""
+        )
+        cache_key = (provider, model, " ".join(str(last_user).lower().split())[:300])
+        hit = state.search_cache.get(cache_key)
+        if hit and hit[0] > time.time():
+            return hit[1], list(hit[2])
+
     if schema == "responses":
         payload = _build_responses_payload(messages, model, temp, max_toks, search_mode)
     else:
@@ -1373,9 +1396,18 @@ async def _call_api(
 
     _log_api_usage(provider, model, data)
 
-    if schema == "responses":
-        return _parse_responses_reply(data)
-    return _parse_chat_completions_reply(data)
+    result = (
+        _parse_responses_reply(data)
+        if schema == "responses"
+        else _parse_chat_completions_reply(data)
+    )
+    if cache_key is not None and result[0]:
+        if len(state.search_cache) >= SEARCH_CACHE_MAX_ENTRIES:
+            state.search_cache.clear()
+        state.search_cache[cache_key] = (
+            time.time() + SEARCH_CACHE_TTL_SECS, result[0], list(result[1])
+        )
+    return result
 
 
 def _log_api_usage(provider: str, model: str, data: Dict[str, Any]) -> None:
@@ -1466,7 +1498,9 @@ def _build_responses_payload(
         effort = state.settings.reasoning_effort
         if provider == "grok" and effort == "none":
             effort = state.settings.grok_reasoning_effort or DEFAULT_GROK_REASONING_EFFORT
-        payload["reasoning"] = {"effort": effort}
+        # grok-4.20 reasoning ids reason on their own and may reject the knob.
+        if not (provider == "grok" and model.startswith("grok-4.20")):
+            payload["reasoning"] = {"effort": effort}
     if provider == "openai":
         # GPT-5.6's native low verbosity plus a tight output cap keeps normal
         # replies IRC-sized. Omitting temperature also works across all of its
@@ -2051,13 +2085,19 @@ def _clear_channel_runtime_context(channel: str) -> None:
     state.citation_cache.pop(target, None)
 
 
-def _search_guidance(bundle: LanguageBundle, supports_search: bool) -> str:
+def _search_guidance(bundle: LanguageBundle, searching: bool, can_search: bool = True) -> str:
+    """Prompt hint. Only mention search on turns that actually search, so the
+    model doesn't emit tool-call text (and cost a retry) on ordinary chat."""
     if bundle.code == "sv":
-        if supports_search:
-            return "Vid nyheter eller aktuella händelser, använd webbsökning och ge verifierade detaljer."
+        if searching:
+            return "Webbsökning är på: slå upp det som efterfrågas och ge verifierade detaljer, kort."
+        if can_search:
+            return "Svara direkt från egen kunskap; anropa inga verktyg."
         return "Du kan inte webbsöka; var tydlig med att aktuella uppgifter inte kan verifieras live."
-    if supports_search:
-        return "For news or current events, use web search and provide verified details."
+    if searching:
+        return "Web search is on: look up what was asked and give verified details, briefly."
+    if can_search:
+        return "Answer directly from your own knowledge; do not call any tools."
     return "You cannot browse the web; clearly say when current facts cannot be verified live."
 
 
@@ -2165,7 +2205,7 @@ def _settings_from_config(bot) -> AISettings:
     legacy_replacements = {
         ("deepseek", "deepseek-chat"): "deepseek-v4-flash",
         ("openai", "gpt-4.1-nano"): "gpt-5.6-luna",
-        ("grok", "grok-4-1-fast"): "grok-4.6",
+        ("grok", "grok-4-1-fast"): "grok-4.20-0309-reasoning",
     }
     replacement = legacy_replacements.get((provider, model.strip().lower()))
     if replacement:

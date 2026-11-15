@@ -234,7 +234,7 @@ class AIPluginDatabaseTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"core.utils": fake_utils}):
             settings = ai._settings_from_config(object())
 
-        self.assertEqual(settings.model, "grok-4.6")
+        self.assertEqual(settings.model, "grok-4.20-0309-reasoning")
         self.assertTrue(settings.enabled)
 
     def test_blank_grok_model_uses_balanced_quality_defaults(self):
@@ -249,7 +249,7 @@ class AIPluginDatabaseTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"core.utils": fake_utils}):
             settings = ai._settings_from_config(object())
 
-        self.assertEqual(settings.model, "grok-4.6")
+        self.assertEqual(settings.model, "grok-4.20-0309-reasoning")
         self.assertEqual(settings.reasoning_effort, "low")
         self.assertEqual(settings.grok_reasoning_effort, "low")
         self.assertEqual(settings.language, "sv")
@@ -290,6 +290,20 @@ class AIPluginDatabaseTests(unittest.TestCase):
             "sök efter valresultatet",
         ):
             self.assertIsNotNone(ai._SV_BUNDLE.search_intent_re.search(message), message)
+
+
+class SearchTriggerTests(unittest.TestCase):
+    def test_lookup_verbs_trigger_and_casual_words_do_not(self):
+        for m in ("google the release date of gta 7", "who is the ceo of xai", "look up rust 2.0"):
+            self.assertIsNotNone(ai._EN_BUNDLE.search_intent_re.search(m), m)
+        for m in ("what a nice day today", "is it worth it lol", "tonight we party"):
+            self.assertIsNone(ai._EN_BUNDLE.search_intent_re.search(m), m)
+        self.assertIsNotNone(ai._SV_BUNDLE.search_intent_re.search("googla vem som vann"))
+        self.assertIsNone(ai._SV_BUNDLE.search_intent_re.search("ikväll blir det pizza"))
+
+    def test_search_guidance_only_mentions_search_when_searching(self):
+        self.assertIn("Web search is on", ai._search_guidance(ai._EN_BUNDLE, True))
+        self.assertIn("do not call any tools", ai._search_guidance(ai._EN_BUNDLE, False))
 
 
 class AIPluginAsyncTests(unittest.IsolatedAsyncioTestCase):
