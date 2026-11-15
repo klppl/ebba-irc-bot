@@ -306,6 +306,21 @@ class SearchTriggerTests(unittest.TestCase):
         self.assertIn("do not call any tools", ai._search_guidance(ai._EN_BUNDLE, False))
 
 
+class XSearchTests(unittest.TestCase):
+    def _tools(self, text, provider="grok"):
+        st = ai.AISettings(api_key="k", provider=provider, model="m", enabled=True)
+        with mock.patch.object(ai, "state", ai.AIState(settings=st, headers={})):
+            p = ai._build_responses_payload(
+                [{"role": "user", "content": text}], "m", 0.5, 100, True
+            )
+        return [t["type"] for t in p["tools"]]
+
+    def test_x_search_only_for_x_questions_on_grok(self):
+        self.assertEqual(self._tools("what is elon tweeting about"), ["web_search", "x_search"])
+        self.assertEqual(self._tools("latest news on bitcoin"), ["web_search"])
+        self.assertEqual(self._tools("what did @elonmusk say on X", "openai"), ["web_search"])
+
+
 class AIPluginAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()

@@ -115,6 +115,10 @@ DEFAULT_SEARCH_CONTEXT_SIZE = "low"
 DEFAULT_HISTORY_CONTEXT_ENTRIES = 8
 DEFAULT_BACKGROUND_CONTEXT_CHARS = 1200
 DEFAULT_MAX_REPLY_CHARS = 420
+X_SEARCH_RE = re.compile(
+    r"(?:\btweet(?:s|ed|ing)?\b|\btwitter\b|\bx\.com\b|\bon x\b|\bpå x\b|\btweeta\w*|(?<!\w)@\w{2,15}\b)",
+    re.IGNORECASE,
+)
 SEARCH_CACHE_TTL_SECS = 300.0
 SEARCH_CACHE_MAX_ENTRIES = 64
 
@@ -1520,7 +1524,15 @@ def _build_responses_payload(
             ]
             payload["max_tool_calls"] = max_calls
         else:
-            payload["tools"] = [{"type": "web_search"}]
+            tools: List[Dict[str, Any]] = [{"type": "web_search"}]
+            # x_search costs extra, so only attach it for X/Twitter questions.
+            last_user = next(
+                (str(m.get("content", "")) for m in reversed(input_messages)
+                 if m.get("role") == "user"), "",
+            )
+            if provider == "grok" and X_SEARCH_RE.search(last_user):
+                tools.append({"type": "x_search"})
+            payload["tools"] = tools
             # xAI calls this limit max_turns rather than max_tool_calls.
             payload["max_turns"] = max_calls
     if instructions_parts:
